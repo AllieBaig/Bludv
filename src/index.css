@@ -1,0 +1,47 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+:root {
+  --sat: env(safe-area-inset-top);
+  --sar: env(safe-area-inset-right);
+  --sab: env(safe-area-inset-bottom);
+  --sal: env(safe-area-inset-left);
+}
+
+body {
+  background-color: black;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  overscroll-behavior-y: none;
+}
+
+.pb-safe {
+  padding-bottom: var(--sab);
+}
+
+.pt-safe {
+  padding-top: var(--sat);
+}
+
+/* iPhone Mini and small screen optimizations */
+@media (max-width: 375px) {
+  .text-4xl {
+    font-size: 2.5rem;
+  }
+  .p-6 {
+    padding: 1.25rem;
+  }
+}
+
+/* Hide scrollbars but keep functionality */
+::-webkit-scrollbar {
+  display: none;
+}
+
+* {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}

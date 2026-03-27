@@ -1,0 +1,5 @@
+{
+  "name": "CineVault",
+  "description": "A gamified DVD and Blu-ray collection tracker with offline support and image compression.",
+  "requestFramePermissions": []
+}
