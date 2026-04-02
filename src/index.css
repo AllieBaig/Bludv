@@ -45,3 +45,63 @@ body {
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
+
+/* Theme Textures */
+.theme-paper {
+  background-color: #fdfaf6;
+  background-image: url("https://www.transparenttextures.com/patterns/paper-fibers.png");
+  color: #2d2d2d;
+}
+
+.theme-glass {
+  background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+  color: #f8fafc;
+}
+
+.theme-wood {
+  background-color: #d2b48c;
+  background-image: url("https://www.transparenttextures.com/patterns/wood-pattern.png");
+  color: #3e2723;
+}
+
+.theme-metal {
+  background-color: #2c3e50;
+  background-image: url("https://www.transparenttextures.com/patterns/brushed-alum.png");
+  color: #ecf0f1;
+}
+
+.theme-fabric {
+  background-color: #7f8c8d;
+  background-image: url("https://www.transparenttextures.com/patterns/fabric-of-squares.png");
+  color: #fdfcfb;
+}
+
+/* Glass Card Effect */
+.glass-card {
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.theme-paper .glass-card {
+  background: rgba(0, 0, 0, 0.03);
+  backdrop-filter: none;
+  border: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.theme-wood .glass-card {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.theme-metal .glass-card {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.theme-fabric .glass-card {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+

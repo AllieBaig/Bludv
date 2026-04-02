@@ -29,6 +29,8 @@ interface CineVaultDB extends DBSchema {
   };
 }
 
+export type ThemeType = 'dark' | 'paper' | 'glass' | 'wood' | 'metal' | 'fabric';
+
 let dbPromise: Promise<IDBPDatabase<CineVaultDB>> | null = null;
 
 export const getDB = () => {
@@ -43,6 +45,16 @@ export const getDB = () => {
     });
   }
   return dbPromise;
+};
+
+export const getTheme = async (): Promise<ThemeType> => {
+  const db = await getDB();
+  return (await db.get('settings', 'theme')) || 'dark';
+};
+
+export const setTheme = async (theme: ThemeType) => {
+  const db = await getDB();
+  await db.put('settings', theme, 'theme');
 };
 
 export const compressImage = (file: File, maxWidth = 400): Promise<string> => {

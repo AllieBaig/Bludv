@@ -16,13 +16,16 @@ import {
   Upload,
   ChevronRight
 } from 'lucide-react';
-import { getDB, MediaItem, compressImage, calculateLevel } from './lib/db';
+import { getDB, MediaItem, compressImage, calculateLevel, getTheme, setTheme, ThemeType } from './lib/db';
 import { cn } from './lib/utils';
 
 // --- Components ---
 
-const BottomNav = ({ activeTab, setActiveTab }: { activeTab: string, setActiveTab: (t: string) => void }) => (
-  <nav className="fixed bottom-0 left-0 right-0 bg-zinc-900/90 backdrop-blur-md border-t border-zinc-800 pb-safe pt-2 px-6 flex justify-between items-center z-50">
+const BottomNav = ({ activeTab, setActiveTab, theme }: { activeTab: string, setActiveTab: (t: string) => void, theme: ThemeType }) => (
+  <nav className={cn(
+    "fixed bottom-0 left-0 right-0 border-t pb-safe pt-2 px-6 flex justify-between items-center z-50",
+    theme === 'dark' ? "bg-zinc-900/90 backdrop-blur-md border-zinc-800" : "glass-card border-zinc-500/20"
+  )}>
     <button onClick={() => setActiveTab('library')} className={cn("flex flex-col items-center gap-1 transition-colors", activeTab === 'library' ? "text-orange-500" : "text-zinc-500")}>
       <Library size={24} />
       <span className="text-[10px] font-medium uppercase tracking-wider">Library</span>
@@ -47,13 +50,16 @@ const ProgressBar = ({ progress }: { progress: number }) => (
   </div>
 );
 
-const MediaCard: React.FC<{ item: MediaItem, onClick: () => void }> = ({ item, onClick }) => (
+const MediaCard: React.FC<{ item: MediaItem, onClick: () => void, theme: ThemeType }> = ({ item, onClick, theme }) => (
   <motion.div 
     layout
     initial={{ opacity: 0, y: 20 }}
     animate={{ opacity: 1, y: 0 }}
     onClick={onClick}
-    className="relative aspect-[2/3] rounded-xl overflow-hidden bg-zinc-800 group cursor-pointer border border-zinc-700/50"
+    className={cn(
+      "relative aspect-[2/3] rounded-xl overflow-hidden group cursor-pointer border",
+      theme === 'dark' ? "bg-zinc-800 border-zinc-700/50" : "glass-card"
+    )}
   >
     {item.image ? (
       <img src={item.image} alt={item.title} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" referrerPolicy="no-referrer" />
@@ -82,6 +88,7 @@ export default function App() {
   const [isAdding, setIsAdding] = useState(false);
   const [selectedItem, setSelectedItem] = useState<MediaItem | null>(null);
   const [stats, setStats] = useState({ totalXp: 0, count: 0 });
+  const [theme, setThemeState] = useState<ThemeType>('dark');
 
   // Form State
   const [formData, setFormData] = useState<Partial<MediaItem>>({
@@ -94,7 +101,18 @@ export default function App() {
 
   useEffect(() => {
     loadData();
+    loadTheme();
   }, []);
+
+  const loadTheme = async () => {
+    const t = await getTheme();
+    setThemeState(t);
+  };
+
+  const handleThemeChange = async (t: ThemeType) => {
+    setThemeState(t);
+    await setTheme(t);
+  };
 
   const loadData = async () => {
     const db = await getDB();
@@ -184,20 +202,35 @@ export default function App() {
   const { level, progress, title, nextLevelXp } = calculateLevel(stats.totalXp);
 
   return (
-    <div className="min-h-screen bg-black text-zinc-100 font-sans selection:bg-orange-500/30 pb-24">
+    <div className={cn(
+      "min-h-screen font-sans selection:bg-orange-500/30 pb-24 transition-colors duration-500",
+      theme === 'dark' ? "bg-black text-zinc-100" : `theme-${theme}`
+    )}>
       {/* Header / Stats */}
-      <header className="p-6 pt-12 bg-gradient-to-b from-zinc-900 to-black border-b border-zinc-800/50">
+      <header className={cn(
+        "p-6 pt-12 border-b",
+        theme === 'dark' ? "bg-gradient-to-b from-zinc-900 to-black border-zinc-800/50" : "bg-transparent border-black/10"
+      )}>
         <div className="flex justify-between items-start mb-6">
           <div>
-            <h1 className="text-3xl font-black tracking-tighter text-white italic uppercase">CineVault</h1>
-            <p className="text-zinc-500 text-xs font-bold uppercase tracking-widest mt-1">{title}</p>
+            <h1 className={cn(
+              "text-3xl font-black tracking-tighter italic uppercase",
+              theme === 'dark' ? "text-white" : "text-inherit"
+            )}>CineVault</h1>
+            <p className={cn(
+              "text-xs font-bold uppercase tracking-widest mt-1",
+              theme === 'dark' ? "text-zinc-500" : "opacity-60"
+            )}>{title}</p>
           </div>
           <div className="flex flex-col items-end">
             <div className="flex items-center gap-2 text-orange-500">
               <Trophy size={18} />
               <span className="text-2xl font-black tracking-tighter italic">LVL {level}</span>
             </div>
-            <p className="text-[10px] text-zinc-500 font-mono mt-1 uppercase">{stats.totalXp} / {nextLevelXp} XP</p>
+            <p className={cn(
+              "text-[10px] font-mono mt-1 uppercase",
+              theme === 'dark' ? "text-zinc-500" : "opacity-60"
+            )}>{stats.totalXp} / {nextLevelXp} XP</p>
           </div>
         </div>
         <ProgressBar progress={progress} />
@@ -209,11 +242,14 @@ export default function App() {
           <div className="space-y-6">
             {/* Search */}
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" size={18} />
+              <Search className={cn("absolute left-3 top-1/2 -translate-y-1/2", theme === 'dark' ? "text-zinc-500" : "opacity-50")} size={18} />
               <input 
                 type="text" 
                 placeholder="Search by title, actor, or tag..." 
-                className="w-full bg-zinc-900 border border-zinc-800 rounded-xl py-3 pl-10 pr-4 text-sm focus:outline-none focus:border-orange-500 transition-colors"
+                className={cn(
+                  "w-full border rounded-xl py-3 pl-10 pr-4 text-sm focus:outline-none focus:border-orange-500 transition-all",
+                  theme === 'dark' ? "bg-zinc-900 border-zinc-800" : "glass-card border-black/10"
+                )}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
@@ -223,7 +259,7 @@ export default function App() {
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
               <AnimatePresence mode="popLayout">
                 {filteredItems.map(item => (
-                  <MediaCard key={item.id} item={item} onClick={() => setSelectedItem(item)} />
+                  <MediaCard key={item.id} item={item} onClick={() => setSelectedItem(item)} theme={theme} />
                 ))}
               </AnimatePresence>
             </div>
@@ -238,43 +274,77 @@ export default function App() {
         )}
 
         {activeTab === 'settings' && (
-          <div className="space-y-4 max-w-md mx-auto">
+          <div className="space-y-6 max-w-md mx-auto">
             <h2 className="text-xl font-bold mb-6 flex items-center gap-2">
               <SettingsIcon size={20} /> Settings
             </h2>
+
+            {/* Theme Selection */}
+            <div>
+              <h3 className="text-[10px] font-bold uppercase opacity-50 mb-3 tracking-widest">Vault Appearance</h3>
+              <div className="grid grid-cols-3 gap-2">
+                {(['dark', 'paper', 'glass', 'wood', 'metal', 'fabric'] as ThemeType[]).map(t => (
+                  <button 
+                    key={t}
+                    onClick={() => handleThemeChange(t)}
+                    className={cn(
+                      "flex flex-col items-center gap-2 p-3 rounded-xl border transition-all active:scale-95",
+                      theme === t ? "border-orange-500 bg-orange-500/10" : "border-zinc-800 bg-zinc-900/50"
+                    )}
+                  >
+                    <div className={cn("w-full aspect-square rounded-lg border border-white/10", `theme-${t}`, t === 'dark' && "bg-black")} />
+                    <span className="text-[10px] font-bold uppercase">{t}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
             
-            <button onClick={() => window.location.reload()} className="w-full flex items-center justify-between p-4 bg-zinc-900 rounded-xl border border-zinc-800 active:scale-[0.98] transition-all">
-              <div className="flex items-center gap-3">
-                <RefreshCw size={20} className="text-blue-500" />
-                <span className="font-medium">Refresh App</span>
-              </div>
-              <ChevronRight size={16} className="text-zinc-600" />
-            </button>
+            <div className="space-y-2">
+              <button onClick={() => window.location.reload()} className={cn(
+                "w-full flex items-center justify-between p-4 rounded-xl border active:scale-[0.98] transition-all",
+                theme === 'dark' ? "bg-zinc-900 border-zinc-800" : "glass-card border-black/10"
+              )}>
+                <div className="flex items-center gap-3">
+                  <RefreshCw size={20} className="text-blue-500" />
+                  <span className="font-medium">Refresh App</span>
+                </div>
+                <ChevronRight size={16} className="text-zinc-600" />
+              </button>
 
-            <button onClick={handleExport} className="w-full flex items-center justify-between p-4 bg-zinc-900 rounded-xl border border-zinc-800 active:scale-[0.98] transition-all">
-              <div className="flex items-center gap-3">
-                <Download size={20} className="text-green-500" />
-                <span className="font-medium">Export Backup</span>
-              </div>
-              <ChevronRight size={16} className="text-zinc-600" />
-            </button>
+              <button onClick={handleExport} className={cn(
+                "w-full flex items-center justify-between p-4 rounded-xl border active:scale-[0.98] transition-all",
+                theme === 'dark' ? "bg-zinc-900 border-zinc-800" : "glass-card border-black/10"
+              )}>
+                <div className="flex items-center gap-3">
+                  <Download size={20} className="text-green-500" />
+                  <span className="font-medium">Export Backup</span>
+                </div>
+                <ChevronRight size={16} className="text-zinc-600" />
+              </button>
 
-            <label className="w-full flex items-center justify-between p-4 bg-zinc-900 rounded-xl border border-zinc-800 active:scale-[0.98] transition-all cursor-pointer">
-              <div className="flex items-center gap-3">
-                <Upload size={20} className="text-purple-500" />
-                <span className="font-medium">Import Backup</span>
-              </div>
-              <input type="file" accept=".json" onChange={handleImport} className="hidden" />
-              <ChevronRight size={16} className="text-zinc-600" />
-            </label>
+              <label className={cn(
+                "w-full flex items-center justify-between p-4 rounded-xl border active:scale-[0.98] transition-all cursor-pointer",
+                theme === 'dark' ? "bg-zinc-900 border-zinc-800" : "glass-card border-black/10"
+              )}>
+                <div className="flex items-center gap-3">
+                  <Upload size={20} className="text-purple-500" />
+                  <span className="font-medium">Import Backup</span>
+                </div>
+                <input type="file" accept=".json" onChange={handleImport} className="hidden" />
+                <ChevronRight size={16} className="text-zinc-600" />
+              </label>
 
-            <button onClick={clearCache} className="w-full flex items-center justify-between p-4 bg-zinc-900 rounded-xl border border-zinc-800 active:scale-[0.98] transition-all">
-              <div className="flex items-center gap-3">
-                <Trash2 size={20} className="text-red-500" />
-                <span className="font-medium">Clear All Data</span>
-              </div>
-              <ChevronRight size={16} className="text-zinc-600" />
-            </button>
+              <button onClick={clearCache} className={cn(
+                "w-full flex items-center justify-between p-4 rounded-xl border active:scale-[0.98] transition-all",
+                theme === 'dark' ? "bg-zinc-900 border-zinc-800" : "glass-card border-black/10"
+              )}>
+                <div className="flex items-center gap-3">
+                  <Trash2 size={20} className="text-red-500" />
+                  <span className="font-medium">Clear All Data</span>
+                </div>
+                <ChevronRight size={16} className="text-zinc-600" />
+              </button>
+            </div>
 
             <div className="pt-8 text-center text-[10px] text-zinc-600 uppercase tracking-[0.2em] font-bold">
               CineVault v1.0.0 • Offline Ready
@@ -435,16 +505,22 @@ export default function App() {
             initial={{ opacity: 0, y: 100 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 100 }}
-            className="fixed inset-0 bg-black z-[70] overflow-y-auto"
+            className={cn(
+              "fixed inset-0 z-[70] overflow-y-auto transition-colors duration-500",
+              theme === 'dark' ? "bg-black" : `theme-${theme}`
+            )}
           >
             <div className="relative aspect-[2/3] w-full max-h-[60vh]">
               {selectedItem.image ? (
                 <img src={selectedItem.image} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
               ) : (
-                <div className="w-full h-full bg-zinc-900 flex items-center justify-center text-zinc-700 italic">No Image</div>
+                <div className={cn(
+                  "w-full h-full flex items-center justify-center italic",
+                  theme === 'dark' ? "bg-zinc-900 text-zinc-700" : "bg-black/5 text-inherit opacity-50"
+                )}>No Image</div>
               )}
-              <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent" />
-              <button onClick={() => setSelectedItem(null)} className="absolute top-12 right-6 p-2 bg-black/50 backdrop-blur-md rounded-full border border-white/10">
+              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
+              <button onClick={() => setSelectedItem(null)} className="absolute top-12 right-6 p-2 bg-black/50 backdrop-blur-md rounded-full border border-white/10 text-white">
                 <X size={20} />
               </button>
             </div>
@@ -453,17 +529,26 @@ export default function App() {
               <div>
                 <div className="flex gap-2 mb-2">
                   <span className="text-[10px] bg-orange-500 text-white px-2 py-0.5 rounded uppercase font-black italic">{selectedItem.format}</span>
-                  <span className="text-[10px] bg-zinc-800 text-white px-2 py-0.5 rounded uppercase font-black italic">{selectedItem.type}</span>
+                  <span className={cn(
+                    "text-[10px] px-2 py-0.5 rounded uppercase font-black italic",
+                    theme === 'dark' ? "bg-zinc-800 text-white" : "bg-black/10 text-inherit"
+                  )}>{selectedItem.type}</span>
                 </div>
-                <h2 className="text-4xl font-black tracking-tighter italic uppercase text-white leading-none">{selectedItem.title}</h2>
+                <h2 className={cn(
+                  "text-4xl font-black tracking-tighter italic uppercase leading-none",
+                  theme === 'dark' ? "text-white" : "text-inherit"
+                )}>{selectedItem.title}</h2>
               </div>
 
               {selectedItem.type === 'tv' && selectedItem.seasons && selectedItem.seasons.length > 0 && (
                 <div>
-                  <h3 className="text-[10px] font-bold uppercase text-zinc-500 mb-3 tracking-widest">Seasons Collected</h3>
+                  <h3 className="text-[10px] font-bold uppercase opacity-50 mb-3 tracking-widest">Seasons Collected</h3>
                   <div className="flex flex-wrap gap-2">
                     {selectedItem.seasons.sort((a,b) => a.number - b.number).map(s => (
-                      <div key={s.number} className="bg-zinc-900 border border-zinc-800 px-4 py-2 rounded-lg text-xs font-bold">
+                      <div key={s.number} className={cn(
+                        "border px-4 py-2 rounded-lg text-xs font-bold",
+                        theme === 'dark' ? "bg-zinc-900 border-zinc-800" : "glass-card border-black/10"
+                      )}>
                         Season {s.number}
                       </div>
                     ))}
@@ -473,10 +558,10 @@ export default function App() {
 
               {selectedItem.actors.length > 0 && (
                 <div>
-                  <h3 className="text-[10px] font-bold uppercase text-zinc-500 mb-3 tracking-widest">Cast</h3>
+                  <h3 className="text-[10px] font-bold uppercase opacity-50 mb-3 tracking-widest">Cast</h3>
                   <div className="flex flex-wrap gap-2">
                     {selectedItem.actors.map(actor => (
-                      <span key={actor} className="text-sm font-medium text-zinc-300">{actor}</span>
+                      <span key={actor} className="text-sm font-medium opacity-80">{actor}</span>
                     ))}
                   </div>
                 </div>
@@ -484,16 +569,22 @@ export default function App() {
 
               {selectedItem.tags.length > 0 && (
                 <div>
-                  <h3 className="text-[10px] font-bold uppercase text-zinc-500 mb-3 tracking-widest">Tags</h3>
+                  <h3 className="text-[10px] font-bold uppercase opacity-50 mb-3 tracking-widest">Tags</h3>
                   <div className="flex flex-wrap gap-2">
                     {selectedItem.tags.map(tag => (
-                      <span key={tag} className="bg-zinc-900 text-zinc-400 px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider border border-zinc-800">{tag}</span>
+                      <span key={tag} className={cn(
+                        "px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider border",
+                        theme === 'dark' ? "bg-zinc-900 text-zinc-400 border-zinc-800" : "glass-card border-black/10 opacity-70"
+                      )}>{tag}</span>
                     ))}
                   </div>
                 </div>
               )}
 
-              <div className="pt-6 border-t border-zinc-800 flex gap-4">
+              <div className={cn(
+                "pt-6 border-t flex gap-4",
+                theme === 'dark' ? "border-zinc-800" : "border-black/10"
+              )}>
                 <button 
                   onClick={() => handleDeleteItem(selectedItem.id)}
                   className="flex-1 bg-red-500/10 text-red-500 border border-red-500/20 font-bold uppercase text-xs py-4 rounded-xl active:scale-[0.98] transition-all"
@@ -506,7 +597,7 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      <BottomNav activeTab={activeTab} setActiveTab={setActiveTab} />
+      <BottomNav activeTab={activeTab} setActiveTab={setActiveTab} theme={theme} />
     </div>
   );
 }
