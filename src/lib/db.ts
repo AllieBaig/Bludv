@@ -11,6 +11,7 @@ export interface MediaItem {
   year?: string;
   genre?: string;
   rating?: string;
+  description?: string;
   amazonUrl?: string;
   seasons?: {
     number: number;

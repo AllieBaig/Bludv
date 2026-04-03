@@ -3,34 +3,40 @@ import { GoogleGenAI, Type } from "@google/genai";
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 
 export interface ImdbData {
+  title: string;
   year: string;
   genre: string;
   rating: string;
   imageUrl: string;
   actors: string[];
+  description: string;
+  format?: 'dvd' | 'bluray' | '4k';
+  type?: 'movie' | 'tv';
 }
 
 export const fetchMediaInfo = async (title: string, type: 'movie' | 'tv'): Promise<ImdbData | null> => {
   try {
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
-      contents: `Find the release year, main genre, IMDb rating, and a high-quality poster image URL for the ${type === 'movie' ? 'movie' : 'TV show'} titled "${title}". Also list the main actors.`,
+      contents: `Find the official title, release year, main genre, IMDb rating, a high-quality poster image URL, and a short description for the ${type === 'movie' ? 'movie' : 'TV show'} titled "${title}". Also list the main actors.`,
       config: {
         tools: [{ googleSearch: {} }],
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
           properties: {
+            title: { type: Type.STRING },
             year: { type: Type.STRING },
             genre: { type: Type.STRING },
             rating: { type: Type.STRING },
             imageUrl: { type: Type.STRING },
+            description: { type: Type.STRING },
             actors: { 
               type: Type.ARRAY,
               items: { type: Type.STRING }
             }
           },
-          required: ["year", "genre", "rating", "imageUrl", "actors"]
+          required: ["title", "year", "genre", "rating", "imageUrl", "actors", "description"]
         }
       }
     });
@@ -41,6 +47,45 @@ export const fetchMediaInfo = async (title: string, type: 'movie' | 'tv'): Promi
     return null;
   } catch (error) {
     console.error("Error fetching media info:", error);
+    return null;
+  }
+};
+
+export const fetchByBarcode = async (barcode: string): Promise<ImdbData | null> => {
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: `Identify the movie or TV show associated with the barcode "${barcode}". Provide the official title, release year, main genre, IMDb rating, a high-quality poster image URL, a short description, the media format (dvd, bluray, or 4k), and the type (movie or tv). Also list the main actors.`,
+      config: {
+        tools: [{ googleSearch: {} }],
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            title: { type: Type.STRING },
+            year: { type: Type.STRING },
+            genre: { type: Type.STRING },
+            rating: { type: Type.STRING },
+            imageUrl: { type: Type.STRING },
+            description: { type: Type.STRING },
+            format: { type: Type.STRING, enum: ['dvd', 'bluray', '4k'] },
+            type: { type: Type.STRING, enum: ['movie', 'tv'] },
+            actors: { 
+              type: Type.ARRAY,
+              items: { type: Type.STRING }
+            }
+          },
+          required: ["title", "year", "genre", "rating", "imageUrl", "actors", "description", "format", "type"]
+        }
+      }
+    });
+
+    if (response.text) {
+      return JSON.parse(response.text) as ImdbData;
+    }
+    return null;
+  } catch (error) {
+    console.error("Error fetching media info by barcode:", error);
     return null;
   }
 };

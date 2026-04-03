@@ -24,11 +24,13 @@ import {
   Star,
   Calendar,
   Tag as TagIcon,
-  Globe
+  Globe,
+  Barcode
 } from 'lucide-react';
+import { Html5Qrcode } from 'html5-qrcode';
 import { getDB, MediaItem, compressImage, calculateLevel, getSettings, updateSetting, ThemeType, DisplayMode, AppSettings } from './lib/db';
 import { cn } from './lib/utils';
-import { fetchMediaInfo, getAmazonUkLink, urlToBase64 } from './lib/gemini';
+import { fetchMediaInfo, fetchByBarcode, getAmazonUkLink, urlToBase64 } from './lib/gemini';
 
 // --- Components ---
 
@@ -144,6 +146,8 @@ export default function App() {
   const [isQuickAdding, setIsQuickAdding] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [isFetching, setIsFetching] = useState(false);
+  const [isScanning, setIsScanning] = useState(false);
+  const [scanError, setScanError] = useState<string | null>(null);
 
   // Form State
   const [formData, setFormData] = useState<Partial<MediaItem>>({
@@ -192,6 +196,7 @@ export default function App() {
       year: formData.year,
       genre: formData.genre,
       rating: formData.rating,
+      description: formData.description,
       amazonUrl: formData.amazonUrl || getAmazonUkLink(formData.title, formData.format || 'bluray'),
       seasons: formData.seasons || [],
       addedAt: isEditing && formData.addedAt ? formData.addedAt : Date.now(),
@@ -217,15 +222,77 @@ export default function App() {
       }
       setFormData(prev => ({
         ...prev,
+        title: data.title || prev.title,
         year: data.year,
         genre: data.genre,
         rating: data.rating,
+        description: data.description,
         actors: [...new Set([...(prev.actors || []), ...data.actors])],
         image: base64Image || prev.image
       }));
     }
     setIsFetching(false);
   };
+
+  const handleScan = async (decodedText: string) => {
+    setIsScanning(false);
+    if (!navigator.onLine) {
+      setFormData(prev => ({ ...prev, title: `Barcode: ${decodedText}` }));
+      setIsAdding(true);
+      return;
+    }
+    setIsFetching(true);
+    setIsAdding(true);
+    const data = await fetchByBarcode(decodedText);
+    if (data) {
+      let base64Image = undefined;
+      if (data.imageUrl) {
+        base64Image = await urlToBase64(data.imageUrl);
+      }
+      setFormData({
+        title: data.title,
+        type: data.type || 'movie',
+        format: data.format || 'bluray',
+        year: data.year,
+        genre: data.genre,
+        rating: data.rating,
+        description: data.description,
+        actors: data.actors,
+        image: base64Image,
+        tags: [],
+        seasons: []
+      });
+    } else {
+      setFormData(prev => ({ ...prev, title: `Barcode: ${decodedText}` }));
+    }
+    setIsFetching(false);
+  };
+
+  useEffect(() => {
+    let html5QrCode: Html5Qrcode | null = null;
+    if (isScanning) {
+      html5QrCode = new Html5Qrcode("reader");
+      html5QrCode.start(
+        { facingMode: "environment" },
+        { fps: 10, qrbox: { width: 250, height: 150 } },
+        (decodedText) => {
+          handleScan(decodedText);
+          html5QrCode?.stop();
+        },
+        (errorMessage) => {
+          // Ignore errors
+        }
+      ).catch(err => {
+        setScanError("Camera access denied or not available");
+        console.error(err);
+      });
+    }
+    return () => {
+      if (html5QrCode?.isScanning) {
+        html5QrCode.stop();
+      }
+    };
+  }, [isScanning]);
 
   const handleDeleteItem = async (id: string) => {
     const db = await getDB();
@@ -360,6 +427,17 @@ export default function App() {
                 <p className="text-sm font-medium">No items found in your vault.</p>
               </div>
             )}
+
+            {/* Floating Scan Button */}
+            <motion.button
+              initial={{ scale: 0 }}
+              animate={{ scale: 1 }}
+              whileTap={{ scale: 0.9 }}
+              onClick={() => setIsScanning(true)}
+              className="fixed bottom-24 right-6 w-14 h-14 bg-orange-500 text-white rounded-full shadow-2xl shadow-orange-500/40 flex items-center justify-center z-40 border-2 border-white/20"
+            >
+              <Barcode size={24} />
+            </motion.button>
           </div>
         )}
 
@@ -517,10 +595,45 @@ export default function App() {
             <div className="max-w-md mx-auto space-y-6 pb-12">
               <div className="flex justify-between items-center">
                 <h2 className="text-2xl font-black italic uppercase tracking-tighter">{isEditing ? 'Edit Item' : 'Add to Vault'}</h2>
-                <button onClick={() => { setIsAdding(false); setIsEditing(false); setActiveTab('library'); }} className="p-2 bg-zinc-800 rounded-full">
-                  <X size={20} />
-                </button>
+                <div className="flex gap-2">
+                  {!isEditing && (
+                    <button 
+                      onClick={() => setIsScanning(true)} 
+                      className="p-2 bg-orange-500 rounded-full text-white shadow-lg shadow-orange-500/20"
+                    >
+                      <Barcode size={20} />
+                    </button>
+                  )}
+                  <button onClick={() => { setIsAdding(false); setIsEditing(false); setActiveTab('library'); }} className="p-2 bg-zinc-800 rounded-full">
+                    <X size={20} />
+                  </button>
+                </div>
               </div>
+
+              {isScanning && (
+                <div className="fixed inset-0 z-[100] bg-black flex flex-col items-center justify-center p-6">
+                  <div className="w-full max-w-sm aspect-square bg-zinc-900 rounded-2xl overflow-hidden relative border-2 border-orange-500">
+                    <div id="reader" className="w-full h-full"></div>
+                    <div className="absolute inset-0 border-[40px] border-black/50 pointer-events-none">
+                      <div className="w-full h-full border-2 border-orange-500/50 rounded-lg"></div>
+                    </div>
+                  </div>
+                  <p className="mt-6 text-sm font-bold uppercase tracking-widest text-zinc-400">Scan Barcode</p>
+                  {!navigator.onLine && <p className="mt-2 text-[10px] text-orange-500 font-bold uppercase">Offline Mode: Manual entry after scan</p>}
+                  {scanError && <p className="mt-2 text-xs text-red-500">{scanError}</p>}
+                  <button 
+                    onClick={() => setIsScanning(false)}
+                    className="mt-12 px-8 py-3 bg-zinc-800 rounded-full font-bold uppercase text-xs tracking-widest"
+                  >Cancel</button>
+                </div>
+              )}
+
+              {isFetching && (
+                <div className="fixed inset-0 z-[110] bg-black/50 backdrop-blur-sm flex flex-col items-center justify-center">
+                  <div className="w-16 h-16 border-4 border-orange-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+                  <p className="text-white font-bold uppercase tracking-widest text-xs">Fetching Data...</p>
+                </div>
+              )}
 
               {/* Image Upload */}
               <div className="aspect-[2/3] w-48 mx-auto bg-zinc-900 rounded-2xl border-2 border-dashed border-zinc-800 flex flex-col items-center justify-center relative overflow-hidden group">
@@ -685,6 +798,18 @@ export default function App() {
                   />
                 </div>
 
+                {formData.description && (
+                  <div>
+                    <label className="text-[10px] font-bold uppercase text-zinc-500 ml-1">Description</label>
+                    <p className={cn(
+                      "p-4 rounded-xl text-xs leading-relaxed border",
+                      settings.theme === 'dark' ? "bg-zinc-900/50 border-zinc-800 text-zinc-400" : "bg-black/5 border-black/5 text-zinc-600"
+                    )}>
+                      {formData.description}
+                    </p>
+                  </div>
+                )}
+
                 <button 
                   onClick={handleAddItem}
                   className="w-full bg-orange-500 text-white font-black italic uppercase py-4 rounded-xl shadow-lg shadow-orange-500/20 active:scale-[0.98] transition-all"
@@ -747,6 +872,14 @@ export default function App() {
                     {selectedItem.year && <span className="flex items-center gap-1"><Calendar size={10} /> {selectedItem.year}</span>}
                     {selectedItem.genre && <span className="flex items-center gap-1"><TagIcon size={10} /> {selectedItem.genre}</span>}
                   </div>
+                  {selectedItem.description && (
+                    <p className={cn(
+                      "mt-4 text-xs leading-relaxed opacity-70 line-clamp-3",
+                      settings.theme === 'dark' ? "text-zinc-300" : "text-zinc-700"
+                    )}>
+                      {selectedItem.description}
+                    </p>
+                  )}
                 </div>
                 <button 
                   onClick={() => {
