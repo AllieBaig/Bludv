@@ -30,6 +30,7 @@ interface CineVaultDB extends DBSchema {
 }
 
 export type ThemeType = 'dark' | 'paper' | 'glass' | 'wood' | 'metal' | 'fabric';
+export type DisplayMode = 'normal' | 'minimal' | 'text';
 
 let dbPromise: Promise<IDBPDatabase<CineVaultDB>> | null = null;
 
@@ -55,6 +56,16 @@ export const getTheme = async (): Promise<ThemeType> => {
 export const setTheme = async (theme: ThemeType) => {
   const db = await getDB();
   await db.put('settings', theme, 'theme');
+};
+
+export const getDisplayMode = async (): Promise<DisplayMode> => {
+  const db = await getDB();
+  return (await db.get('settings', 'displayMode')) || 'normal';
+};
+
+export const setDisplayMode = async (mode: DisplayMode) => {
+  const db = await getDB();
+  await db.put('settings', mode, 'displayMode');
 };
 
 export const compressImage = (file: File, maxWidth = 400): Promise<string> => {

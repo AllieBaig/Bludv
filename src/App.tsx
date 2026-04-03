@@ -14,9 +14,13 @@ import {
   RefreshCw, 
   Download, 
   Upload,
-  ChevronRight
+  ChevronRight,
+  Zap,
+  LayoutGrid,
+  List,
+  Maximize2
 } from 'lucide-react';
-import { getDB, MediaItem, compressImage, calculateLevel, getTheme, setTheme, ThemeType } from './lib/db';
+import { getDB, MediaItem, compressImage, calculateLevel, getTheme, setTheme, ThemeType, getDisplayMode, setDisplayMode, DisplayMode } from './lib/db';
 import { cn } from './lib/utils';
 
 // --- Components ---
@@ -50,36 +54,72 @@ const ProgressBar = ({ progress }: { progress: number }) => (
   </div>
 );
 
-const MediaCard: React.FC<{ item: MediaItem, onClick: () => void, theme: ThemeType }> = ({ item, onClick, theme }) => (
-  <motion.div 
-    layout
-    initial={{ opacity: 0, y: 20 }}
-    animate={{ opacity: 1, y: 0 }}
-    onClick={onClick}
-    className={cn(
-      "relative aspect-[2/3] rounded-xl overflow-hidden group cursor-pointer border",
-      theme === 'dark' ? "bg-zinc-800 border-zinc-700/50" : "glass-card"
-    )}
-  >
-    {item.image ? (
-      <img src={item.image} alt={item.title} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" referrerPolicy="no-referrer" />
-    ) : (
-      <div className="w-full h-full flex items-center justify-center text-zinc-600 italic text-sm p-4 text-center">
-        {item.title}
+const MediaCard: React.FC<{ item: MediaItem, onClick: () => void, theme: ThemeType, mode: DisplayMode }> = ({ item, onClick, theme, mode }) => {
+  if (mode === 'text') {
+    return (
+      <motion.div
+        layout
+        initial={{ opacity: 0, x: -20 }}
+        animate={{ opacity: 1, x: 0 }}
+        onClick={onClick}
+        className={cn(
+          "flex items-center justify-between p-3 rounded-xl border cursor-pointer active:scale-[0.99] transition-all",
+          theme === 'dark' ? "bg-zinc-900 border-zinc-800 hover:border-zinc-700" : "glass-card border-black/5 hover:border-black/10"
+        )}
+      >
+        <div className="flex items-center gap-3 overflow-hidden">
+          {item.type === 'movie' ? <Film size={16} className="text-orange-500 shrink-0" /> : <Tv size={16} className="text-orange-500 shrink-0" />}
+          <div className="overflow-hidden">
+            <p className="text-sm font-bold truncate leading-tight">{item.title}</p>
+            <p className="text-[10px] opacity-50 uppercase font-bold tracking-wider">
+              {item.format} • {item.type === 'tv' ? `${item.seasons?.length || 0} Seasons` : 'Movie'}
+            </p>
+          </div>
+        </div>
+        <ChevronRight size={14} className="text-zinc-600 shrink-0" />
+      </motion.div>
+    );
+  }
+
+  return (
+    <motion.div 
+      layout
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      onClick={onClick}
+      className={cn(
+        "relative aspect-[2/3] rounded-xl overflow-hidden group cursor-pointer border",
+        theme === 'dark' ? "bg-zinc-800 border-zinc-700/50" : "glass-card",
+        mode === 'minimal' && "rounded-lg"
+      )}
+    >
+      {item.image ? (
+        <img src={item.image} alt={item.title} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" referrerPolicy="no-referrer" />
+      ) : (
+        <div className="w-full h-full flex items-center justify-center text-zinc-600 italic text-sm p-4 text-center">
+          {item.title}
+        </div>
+      )}
+      
+      {mode === 'normal' && (
+        <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-3">
+          <p className="text-white text-xs font-bold truncate">{item.title}</p>
+          <div className="flex gap-1 mt-1">
+            <span className="text-[8px] bg-orange-500 text-white px-1 rounded uppercase font-bold">{item.format}</span>
+            <span className="text-[8px] bg-zinc-700 text-white px-1 rounded uppercase font-bold">{item.type}</span>
+          </div>
+        </div>
+      )}
+
+      <div className={cn(
+        "absolute top-2 right-2",
+        mode === 'minimal' && "top-1 right-1"
+      )}>
+        {item.type === 'movie' ? <Film size={mode === 'minimal' ? 10 : 14} className="text-white/50" /> : <Tv size={mode === 'minimal' ? 10 : 14} className="text-white/50" />}
       </div>
-    )}
-    <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-3">
-      <p className="text-white text-xs font-bold truncate">{item.title}</p>
-      <div className="flex gap-1 mt-1">
-        <span className="text-[8px] bg-orange-500 text-white px-1 rounded uppercase font-bold">{item.format}</span>
-        <span className="text-[8px] bg-zinc-700 text-white px-1 rounded uppercase font-bold">{item.type}</span>
-      </div>
-    </div>
-    <div className="absolute top-2 right-2">
-      {item.type === 'movie' ? <Film size={14} className="text-white/50" /> : <Tv size={14} className="text-white/50" />}
-    </div>
-  </motion.div>
-);
+    </motion.div>
+  );
+};
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('library');
@@ -89,6 +129,8 @@ export default function App() {
   const [selectedItem, setSelectedItem] = useState<MediaItem | null>(null);
   const [stats, setStats] = useState({ totalXp: 0, count: 0 });
   const [theme, setThemeState] = useState<ThemeType>('dark');
+  const [displayMode, setDisplayModeState] = useState<DisplayMode>('normal');
+  const [isQuickAdding, setIsQuickAdding] = useState(false);
 
   // Form State
   const [formData, setFormData] = useState<Partial<MediaItem>>({
@@ -101,17 +143,24 @@ export default function App() {
 
   useEffect(() => {
     loadData();
-    loadTheme();
+    loadSettings();
   }, []);
 
-  const loadTheme = async () => {
+  const loadSettings = async () => {
     const t = await getTheme();
+    const m = await getDisplayMode();
     setThemeState(t);
+    setDisplayModeState(m);
   };
 
   const handleThemeChange = async (t: ThemeType) => {
     setThemeState(t);
     await setTheme(t);
+  };
+
+  const handleDisplayModeChange = async (m: DisplayMode) => {
+    setDisplayModeState(m);
+    await setDisplayMode(m);
   };
 
   const loadData = async () => {
@@ -140,6 +189,7 @@ export default function App() {
     };
     await db.put('collection', newItem);
     setIsAdding(false);
+    setIsQuickAdding(false);
     setFormData({ type: 'movie', format: 'bluray', actors: [], tags: [], seasons: [] });
     loadData();
   };
@@ -256,10 +306,15 @@ export default function App() {
             </div>
 
             {/* Grid */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+            <div className={cn(
+              "grid gap-4",
+              displayMode === 'normal' && "grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6",
+              displayMode === 'minimal' && "grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2",
+              displayMode === 'text' && "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3"
+            )}>
               <AnimatePresence mode="popLayout">
                 {filteredItems.map(item => (
-                  <MediaCard key={item.id} item={item} onClick={() => setSelectedItem(item)} theme={theme} />
+                  <MediaCard key={item.id} item={item} onClick={() => setSelectedItem(item)} theme={theme} mode={displayMode} />
                 ))}
               </AnimatePresence>
             </div>
@@ -294,6 +349,30 @@ export default function App() {
                   >
                     <div className={cn("w-full aspect-square rounded-lg border border-white/10", `theme-${t}`, t === 'dark' && "bg-black")} />
                     <span className="text-[10px] font-bold uppercase">{t}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Display Mode Selection */}
+            <div>
+              <h3 className="text-[10px] font-bold uppercase opacity-50 mb-3 tracking-widest">Display Mode</h3>
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { id: 'normal', icon: LayoutGrid, label: 'Normal' },
+                  { id: 'minimal', icon: Maximize2, label: 'Minimal' },
+                  { id: 'text', icon: List, label: 'Text' }
+                ].map(m => (
+                  <button 
+                    key={m.id}
+                    onClick={() => handleDisplayModeChange(m.id as DisplayMode)}
+                    className={cn(
+                      "flex flex-col items-center gap-2 p-3 rounded-xl border transition-all active:scale-95",
+                      displayMode === m.id ? "border-orange-500 bg-orange-500/10" : "border-zinc-800 bg-zinc-900/50"
+                    )}
+                  >
+                    <m.icon size={20} className={displayMode === m.id ? "text-orange-500" : "text-zinc-500"} />
+                    <span className="text-[10px] font-bold uppercase">{m.label}</span>
                   </button>
                 ))}
               </div>
@@ -593,6 +672,83 @@ export default function App() {
                 </button>
               </div>
             </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Quick Add Button */}
+      {activeTab === 'library' && (
+        <motion.button
+          initial={{ scale: 0, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          onClick={() => setIsQuickAdding(true)}
+          className="fixed bottom-24 right-6 bg-zinc-900 text-orange-500 p-4 rounded-full shadow-2xl border border-zinc-800 active:scale-90 transition-transform z-40"
+        >
+          <Zap size={24} />
+        </motion.button>
+      )}
+
+      {/* Quick Add Modal */}
+      <AnimatePresence>
+        {isQuickAdding && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-6"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              className={cn(
+                "w-full max-w-sm rounded-2xl p-6 space-y-4 border shadow-2xl",
+                theme === 'dark' ? "bg-zinc-900 border-zinc-800" : "bg-white border-black/10"
+              )}
+            >
+              <div className="flex justify-between items-center">
+                <h3 className="text-lg font-black italic uppercase tracking-tighter">Quick Add</h3>
+                <button onClick={() => setIsQuickAdding(false)} className="p-1.5 bg-zinc-800 rounded-full text-zinc-400">
+                  <X size={16} />
+                </button>
+              </div>
+              
+              <div className="space-y-3">
+                <input 
+                  autoFocus
+                  type="text" 
+                  placeholder="Title" 
+                  className="w-full bg-black/20 border border-zinc-800 rounded-xl p-3 text-sm focus:outline-none focus:border-orange-500"
+                  value={formData.title || ''}
+                  onChange={(e) => setFormData({...formData, title: e.target.value})}
+                  onKeyDown={(e) => e.key === 'Enter' && handleAddItem()}
+                />
+                <div className="grid grid-cols-2 gap-2">
+                  <select 
+                    className="bg-black/20 border border-zinc-800 rounded-xl p-3 text-xs font-bold uppercase focus:outline-none"
+                    value={formData.type}
+                    onChange={(e) => setFormData({...formData, type: e.target.value as any})}
+                  >
+                    <option value="movie">Movie</option>
+                    <option value="tv">TV Show</option>
+                  </select>
+                  <select 
+                    className="bg-black/20 border border-zinc-800 rounded-xl p-3 text-xs font-bold uppercase focus:outline-none"
+                    value={formData.format}
+                    onChange={(e) => setFormData({...formData, format: e.target.value as any})}
+                  >
+                    <option value="bluray">Blu-ray</option>
+                    <option value="dvd">DVD</option>
+                    <option value="4k">4K</option>
+                  </select>
+                </div>
+                <button 
+                  onClick={handleAddItem}
+                  className="w-full bg-orange-500 text-white font-black italic uppercase py-3 rounded-xl active:scale-[0.98] transition-all"
+                >
+                  Save Instantly
+                </button>
+              </div>
+            </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
