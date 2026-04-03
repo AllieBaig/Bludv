@@ -34,7 +34,13 @@ import { fetchMediaInfo, fetchByBarcode, getAmazonUkLink, urlToBase64 } from './
 
 // --- Components ---
 
-const BottomNav = ({ activeTab, setActiveTab, theme }: { activeTab: string, setActiveTab: (t: string) => void, theme: ThemeType }) => (
+const BottomNav = ({ activeTab, setActiveTab, theme, setAddFlowStep, setIsAdding }: { 
+  activeTab: string, 
+  setActiveTab: (t: string) => void, 
+  theme: ThemeType,
+  setAddFlowStep: (s: any) => void,
+  setIsAdding: (a: boolean) => void
+}) => (
   <nav className={cn(
     "fixed bottom-0 left-0 right-0 border-t pb-safe pt-2 px-6 flex justify-between items-center z-50",
     theme === 'dark' ? "bg-zinc-900/90 backdrop-blur-md border-zinc-800" : "glass-card border-zinc-500/20"
@@ -43,7 +49,7 @@ const BottomNav = ({ activeTab, setActiveTab, theme }: { activeTab: string, setA
       <Library size={24} />
       <span className="text-[10px] font-medium uppercase tracking-wider">Library</span>
     </button>
-    <button onClick={() => setActiveTab('add')} className="bg-orange-500 text-white p-3 rounded-full -mt-8 shadow-lg shadow-orange-500/20 active:scale-95 transition-transform">
+    <button onClick={() => { setAddFlowStep('menu'); setIsAdding(true); }} className="bg-orange-500 text-white p-3 rounded-full -mt-8 shadow-lg shadow-orange-500/20 active:scale-95 transition-transform">
       <Plus size={28} />
     </button>
     <button onClick={() => setActiveTab('settings')} className={cn("flex flex-col items-center gap-1 transition-colors", activeTab === 'settings' ? "text-orange-500" : "text-zinc-500")}>
@@ -144,12 +150,13 @@ export default function App() {
     enableImdbData: true,
     showBottomNav: true
   });
-  const [isQuickAdding, setIsQuickAdding] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [isFetching, setIsFetching] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
   const [scanStatus, setScanStatus] = useState<'scanning' | 'success' | 'failed'>('scanning');
+  const [addFlowStep, setAddFlowStep] = useState<'menu' | 'scan' | 'manual-barcode' | 'quick-add' | 'full-form' | null>(null);
+  const [manualBarcode, setManualBarcode] = useState('');
 
   // Form State
   const [formData, setFormData] = useState<Partial<MediaItem>>({
@@ -207,7 +214,7 @@ export default function App() {
     await db.put('collection', newItem);
     setIsAdding(false);
     setIsEditing(false);
-    setIsQuickAdding(false);
+    setAddFlowStep(null);
     setFormData({ type: 'movie', format: 'bluray', actors: [], tags: [], seasons: [] });
     loadData();
     if (selectedItem) setSelectedItem(newItem);
@@ -236,17 +243,18 @@ export default function App() {
     setIsFetching(false);
   };
 
-  const handleScan = async (decodedText: string) => {
-    setIsScanning(false);
-    setScanStatus('scanning');
+  const handleBarcodeLookup = async (barcode: string) => {
+    if (!barcode) return;
+    setManualBarcode('');
+    setAddFlowStep('full-form');
     if (!navigator.onLine) {
-      setFormData(prev => ({ ...prev, title: `Barcode: ${decodedText}` }));
+      setFormData(prev => ({ ...prev, title: `Barcode: ${barcode}` }));
       setIsAdding(true);
       return;
     }
     setIsFetching(true);
     setIsAdding(true);
-    const data = await fetchByBarcode(decodedText);
+    const data = await fetchByBarcode(barcode);
     if (data) {
       let base64Image = undefined;
       if (data.imageUrl) {
@@ -266,9 +274,15 @@ export default function App() {
         seasons: []
       });
     } else {
-      setFormData(prev => ({ ...prev, title: `Barcode: ${decodedText}` }));
+      setFormData(prev => ({ ...prev, title: `Barcode: ${barcode}` }));
     }
     setIsFetching(false);
+  };
+
+  const handleScan = async (decodedText: string) => {
+    setIsScanning(false);
+    setScanStatus('scanning');
+    handleBarcodeLookup(decodedText);
   };
 
   useEffect(() => {
@@ -401,16 +415,10 @@ export default function App() {
             {!settings.showBottomNav && (
               <div className="flex gap-2">
                 <button 
-                  onClick={() => setIsScanning(true)}
+                  onClick={() => { setAddFlowStep('menu'); setIsAdding(true); }}
                   className="p-2 bg-orange-500 text-white rounded-full transition-all active:scale-90"
                 >
-                  <Barcode size={18} />
-                </button>
-                <button 
-                  onClick={() => setIsQuickAdding(true)}
-                  className="p-2 bg-zinc-800 text-orange-500 rounded-full transition-all active:scale-90"
-                >
-                  <Zap size={18} />
+                  <Plus size={18} />
                 </button>
                 <button 
                   onClick={() => setActiveTab(activeTab === 'settings' ? 'library' : 'settings')}
@@ -477,17 +485,6 @@ export default function App() {
                 <p className="text-sm font-medium">No items found in your vault.</p>
               </div>
             )}
-
-            {/* Floating Scan Button */}
-            <motion.button
-              initial={{ scale: 0 }}
-              animate={{ scale: 1 }}
-              whileTap={{ scale: 0.9 }}
-              onClick={() => setIsScanning(true)}
-              className="fixed bottom-24 right-6 w-14 h-14 bg-orange-500 text-white rounded-full shadow-2xl shadow-orange-500/40 flex items-center justify-center z-40 border-2 border-white/20"
-            >
-              <Barcode size={24} />
-            </motion.button>
           </div>
         )}
 
@@ -651,7 +648,7 @@ export default function App() {
 
       {/* Add / Edit Modal */}
       <AnimatePresence>
-        {(activeTab === 'add' || isAdding || isEditing) && (
+        {(isAdding || isEditing) && (
           <motion.div 
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -662,19 +659,145 @@ export default function App() {
               <div className="flex justify-between items-center">
                 <h2 className="text-2xl font-black italic uppercase tracking-tighter">{isEditing ? 'Edit Item' : 'Add to Vault'}</h2>
                 <div className="flex gap-2">
-                  {!isEditing && (
-                    <button 
-                      onClick={() => setIsScanning(true)} 
-                      className="p-2 bg-orange-500 rounded-full text-white shadow-lg shadow-orange-500/20"
-                    >
-                      <Barcode size={20} />
-                    </button>
-                  )}
-                  <button onClick={() => { setIsAdding(false); setIsEditing(false); setActiveTab('library'); }} className="p-2 bg-zinc-800 rounded-full">
+                  <button onClick={() => { setIsAdding(false); setIsEditing(false); setAddFlowStep(null); }} className="p-2 bg-zinc-800 rounded-full">
                     <X size={20} />
                   </button>
                 </div>
               </div>
+
+              {/* Unified Add Flow Menu */}
+              {!isEditing && addFlowStep === 'menu' && (
+                <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="grid gap-4 pt-4">
+                  <button 
+                    onClick={() => { setIsScanning(true); setAddFlowStep('scan'); }}
+                    className="flex items-center gap-4 p-6 bg-zinc-900 border border-zinc-800 rounded-2xl active:scale-95 transition-all text-left group"
+                  >
+                    <div className="p-3 bg-orange-500 rounded-xl text-white group-active:scale-90 transition-transform"><Barcode size={24} /></div>
+                    <div>
+                      <p className="font-bold uppercase tracking-tight">Scan Barcode</p>
+                      <p className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest mt-1">Use camera to auto-detect</p>
+                    </div>
+                  </button>
+                  <button 
+                    onClick={() => setAddFlowStep('manual-barcode')}
+                    className="flex items-center gap-4 p-6 bg-zinc-900 border border-zinc-800 rounded-2xl active:scale-95 transition-all text-left group"
+                  >
+                    <div className="p-3 bg-blue-500 rounded-xl text-white group-active:scale-90 transition-transform"><Edit2 size={24} /></div>
+                    <div>
+                      <p className="font-bold uppercase tracking-tight">Enter Barcode Manually</p>
+                      <p className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest mt-1">Type barcode number</p>
+                    </div>
+                  </button>
+                  <button 
+                    onClick={() => setAddFlowStep('quick-add')}
+                    className="flex items-center gap-4 p-6 bg-zinc-900 border border-zinc-800 rounded-2xl active:scale-95 transition-all text-left group"
+                  >
+                    <div className="p-3 bg-purple-500 rounded-xl text-white group-active:scale-90 transition-transform"><Zap size={24} /></div>
+                    <div>
+                      <p className="font-bold uppercase tracking-tight">Quick Add</p>
+                      <p className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest mt-1">Minimal fields, save instantly</p>
+                    </div>
+                  </button>
+                  <button 
+                    onClick={() => setAddFlowStep('full-form')}
+                    className="mt-4 text-center text-[10px] font-bold uppercase tracking-widest text-zinc-600 hover:text-zinc-400 transition-colors"
+                  >
+                    Skip to manual entry
+                  </button>
+                </motion.div>
+              )}
+
+              {/* Manual Barcode Input */}
+              {!isEditing && addFlowStep === 'manual-barcode' && (
+                <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-4 pt-4">
+                  <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 space-y-4">
+                    <div>
+                      <label className="text-[10px] font-bold uppercase text-zinc-500 tracking-widest ml-1">Barcode Number</label>
+                      <input 
+                        autoFocus
+                        type="text" 
+                        placeholder="e.g. 5051892123456" 
+                        className="w-full bg-black/20 border border-zinc-800 rounded-xl p-4 text-sm focus:outline-none focus:border-orange-500 mt-2"
+                        value={manualBarcode}
+                        onChange={(e) => setManualBarcode(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && handleBarcodeLookup(manualBarcode)}
+                      />
+                    </div>
+                    <button 
+                      onClick={() => handleBarcodeLookup(manualBarcode)}
+                      disabled={!manualBarcode || isFetching}
+                      className="w-full bg-orange-500 text-white font-black italic uppercase py-4 rounded-xl active:scale-[0.98] transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                    >
+                      {isFetching ? <RefreshCw size={18} className="animate-spin" /> : 'Fetch Media Data'}
+                    </button>
+                  </div>
+                  <button 
+                    onClick={() => setAddFlowStep('menu')}
+                    className="w-full text-center text-[10px] font-bold uppercase tracking-widest text-zinc-600"
+                  >
+                    Back to options
+                  </button>
+                </motion.div>
+              )}
+
+              {/* Quick Add Form */}
+              {!isEditing && addFlowStep === 'quick-add' && (
+                <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-4 pt-4">
+                  <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 space-y-4">
+                    <div className="space-y-3">
+                      <div>
+                        <label className="text-[10px] font-bold uppercase text-zinc-500 tracking-widest ml-1">Title</label>
+                        <input 
+                          autoFocus
+                          type="text" 
+                          placeholder="Title" 
+                          className="w-full bg-black/20 border border-zinc-800 rounded-xl p-3 text-sm focus:outline-none focus:border-orange-500 mt-2"
+                          value={formData.title || ''}
+                          onChange={(e) => setFormData({...formData, title: e.target.value})}
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-[10px] font-bold uppercase text-zinc-500 tracking-widest ml-1">Type</label>
+                          <select 
+                            className="w-full bg-black/20 border border-zinc-800 rounded-xl p-3 text-xs font-bold uppercase focus:outline-none mt-2"
+                            value={formData.type}
+                            onChange={(e) => setFormData({...formData, type: e.target.value as any})}
+                          >
+                            <option value="movie">Movie</option>
+                            <option value="tv">TV Show</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-bold uppercase text-zinc-500 tracking-widest ml-1">Format</label>
+                          <select 
+                            className="w-full bg-black/20 border border-zinc-800 rounded-xl p-3 text-xs font-bold uppercase focus:outline-none mt-2"
+                            value={formData.format}
+                            onChange={(e) => setFormData({...formData, format: e.target.value as any})}
+                          >
+                            <option value="bluray">Blu-ray</option>
+                            <option value="dvd">DVD</option>
+                            <option value="4k">4K</option>
+                          </select>
+                        </div>
+                      </div>
+                      <button 
+                        onClick={handleAddItem}
+                        disabled={!formData.title}
+                        className="w-full bg-orange-500 text-white font-black italic uppercase py-3 rounded-xl active:scale-[0.98] transition-all disabled:opacity-50 mt-2"
+                      >
+                        Save Instantly
+                      </button>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => setAddFlowStep('menu')}
+                    className="w-full text-center text-[10px] font-bold uppercase tracking-widest text-zinc-600"
+                  >
+                    Back to options
+                  </button>
+                </motion.div>
+              )}
 
               {isScanning && (
                 <div className="fixed inset-0 z-[100] bg-black flex flex-col items-center justify-center p-6 overflow-hidden">
@@ -732,7 +855,7 @@ export default function App() {
 
                   <div className="mt-12 flex gap-4">
                     <button 
-                      onClick={() => setIsScanning(false)}
+                      onClick={() => { setIsScanning(false); setAddFlowStep('menu'); }}
                       className="px-8 py-3 bg-zinc-800 rounded-full font-bold uppercase text-[10px] tracking-widest text-zinc-400 active:scale-95 transition-transform"
                     >Cancel</button>
                     <button 
@@ -743,15 +866,18 @@ export default function App() {
                 </div>
               )}
 
-              {isFetching && (
-                <div className="fixed inset-0 z-[110] bg-black/50 backdrop-blur-sm flex flex-col items-center justify-center">
-                  <div className="w-16 h-16 border-4 border-orange-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-                  <p className="text-white font-bold uppercase tracking-widest text-xs">Fetching Data...</p>
-                </div>
-              )}
+              {/* Full Form (Manual Entry or Post-Barcode) */}
+              {(isEditing || addFlowStep === 'full-form') && (
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+                  {isFetching && (
+                    <div className="fixed inset-0 z-[110] bg-black/50 backdrop-blur-sm flex flex-col items-center justify-center">
+                      <div className="w-16 h-16 border-4 border-orange-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+                      <p className="text-white font-bold uppercase tracking-widest text-xs">Fetching Data...</p>
+                    </div>
+                  )}
 
-              {/* Image Upload */}
-              <div className="aspect-[2/3] w-48 mx-auto bg-zinc-900 rounded-2xl border-2 border-dashed border-zinc-800 flex flex-col items-center justify-center relative overflow-hidden group">
+                  {/* Image Upload */}
+                  <div className="aspect-[2/3] w-48 mx-auto bg-zinc-900 rounded-2xl border-2 border-dashed border-zinc-800 flex flex-col items-center justify-center relative overflow-hidden group">
                 {formData.image ? (
                   <>
                     <img src={formData.image} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
@@ -924,18 +1050,30 @@ export default function App() {
                     </p>
                   </div>
                 )}
-
-                <button 
-                  onClick={handleAddItem}
-                  className="w-full bg-orange-500 text-white font-black italic uppercase py-4 rounded-xl shadow-lg shadow-orange-500/20 active:scale-[0.98] transition-all"
-                >
-                  {isEditing ? 'Update Vault' : 'Add to Vault (+XP)'}
-                </button>
               </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+
+              <div className="pt-4 space-y-3">
+                  <button 
+                    onClick={handleAddItem}
+                    className="w-full bg-orange-500 text-white font-black italic uppercase py-4 rounded-xl shadow-lg shadow-orange-500/20 active:scale-[0.98] transition-all"
+                  >
+                    {isEditing ? 'Update Vault' : 'Add to Vault (+XP)'}
+                  </button>
+                  {!isEditing && (
+                    <button 
+                      onClick={() => setAddFlowStep('menu')}
+                      className="w-full text-center text-[10px] font-bold uppercase tracking-widest text-zinc-600"
+                    >
+                      Back to options
+                    </button>
+                  )}
+                </div>
+              </motion.div>
+            )}
+          </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
 
       {/* Detail Modal */}
       <AnimatePresence>
@@ -1082,85 +1220,14 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* Quick Add Button */}
-      {activeTab === 'library' && (
-        <motion.button
-          initial={{ scale: 0, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          onClick={() => setIsQuickAdding(true)}
-          className="fixed bottom-24 right-6 bg-zinc-900 text-orange-500 p-4 rounded-full shadow-2xl border border-zinc-800 active:scale-90 transition-transform z-40"
-        >
-          <Zap size={24} />
-        </motion.button>
-      )}
-
-      {/* Quick Add Modal */}
-      <AnimatePresence>
-        {isQuickAdding && (
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-6"
-          >
-            <motion.div 
-              initial={{ scale: 0.9, y: 20 }}
-              animate={{ scale: 1, y: 0 }}
-              className={cn(
-                "w-full max-w-sm rounded-2xl p-6 space-y-4 border shadow-2xl",
-                settings.theme === 'dark' ? "bg-zinc-900 border-zinc-800" : "bg-white border-black/10"
-              )}
-            >
-              <div className="flex justify-between items-center">
-                <h3 className="text-lg font-black italic uppercase tracking-tighter">Quick Add</h3>
-                <button onClick={() => setIsQuickAdding(false)} className="p-1.5 bg-zinc-800 rounded-full text-zinc-400">
-                  <X size={16} />
-                </button>
-              </div>
-              
-              <div className="space-y-3">
-                <input 
-                  autoFocus
-                  type="text" 
-                  placeholder="Title" 
-                  className="w-full bg-black/20 border border-zinc-800 rounded-xl p-3 text-sm focus:outline-none focus:border-orange-500"
-                  value={formData.title || ''}
-                  onChange={(e) => setFormData({...formData, title: e.target.value})}
-                  onKeyDown={(e) => e.key === 'Enter' && handleAddItem()}
-                />
-                <div className="grid grid-cols-2 gap-2">
-                  <select 
-                    className="bg-black/20 border border-zinc-800 rounded-xl p-3 text-xs font-bold uppercase focus:outline-none"
-                    value={formData.type}
-                    onChange={(e) => setFormData({...formData, type: e.target.value as any})}
-                  >
-                    <option value="movie">Movie</option>
-                    <option value="tv">TV Show</option>
-                  </select>
-                  <select 
-                    className="bg-black/20 border border-zinc-800 rounded-xl p-3 text-xs font-bold uppercase focus:outline-none"
-                    value={formData.format}
-                    onChange={(e) => setFormData({...formData, format: e.target.value as any})}
-                  >
-                    <option value="bluray">Blu-ray</option>
-                    <option value="dvd">DVD</option>
-                    <option value="4k">4K</option>
-                  </select>
-                </div>
-                <button 
-                  onClick={handleAddItem}
-                  className="w-full bg-orange-500 text-white font-black italic uppercase py-3 rounded-xl active:scale-[0.98] transition-all"
-                >
-                  Save Instantly
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
       {settings.showBottomNav && (
-        <BottomNav activeTab={activeTab} setActiveTab={setActiveTab} theme={settings.theme} />
+        <BottomNav 
+          activeTab={activeTab} 
+          setActiveTab={setActiveTab} 
+          theme={settings.theme} 
+          setAddFlowStep={setAddFlowStep}
+          setIsAdding={setIsAdding}
+        />
       )}
     </div>
   );
