@@ -28,18 +28,19 @@ import {
   Barcode
 } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
-import { getDB, MediaItem, compressImage, calculateLevel, getSettings, updateSetting, ThemeType, DisplayMode, AppSettings } from './lib/db';
+import { getDB, MediaItem, compressImage, calculateLevel, getSettings, updateSetting, ThemeType, DisplayMode, AppSettings, getCachedBarcode, cacheBarcode } from './lib/db';
 import { cn } from './lib/utils';
 import { fetchMediaInfo, fetchByBarcode, getAmazonUkLink, urlToBase64 } from './lib/gemini';
 
 // --- Components ---
 
-const BottomNav = ({ activeTab, setActiveTab, theme, setAddFlowStep, setIsAdding }: { 
+const BottomNav = ({ activeTab, setActiveTab, theme, setAddFlowStep, setIsAdding, setDataSource }: { 
   activeTab: string, 
   setActiveTab: (t: string) => void, 
   theme: ThemeType,
   setAddFlowStep: (s: any) => void,
-  setIsAdding: (a: boolean) => void
+  setIsAdding: (a: boolean) => void,
+  setDataSource: (s: any) => void
 }) => (
   <nav className={cn(
     "fixed bottom-0 left-0 right-0 border-t pb-safe pt-2 px-6 flex justify-between items-center z-50 transition-all duration-500",
@@ -56,7 +57,7 @@ const BottomNav = ({ activeTab, setActiveTab, theme, setAddFlowStep, setIsAdding
       <span className="text-[9px] font-bold uppercase tracking-[0.15em]">Vault</span>
     </button>
     <button 
-      onClick={() => { setAddFlowStep('menu'); setIsAdding(true); }} 
+      onClick={() => { setAddFlowStep('menu'); setIsAdding(true); setDataSource(null); }} 
       className="bg-orange-500 text-white p-4 rounded-3xl -mt-10 shadow-[0_15px_30px_rgba(249,115,22,0.4)] active:scale-90 transition-all duration-300 btn-tactile border-4 border-black/10"
     >
       <Plus size={28} strokeWidth={3} />
@@ -171,6 +172,7 @@ export default function App() {
   });
   const [isEditing, setIsEditing] = useState(false);
   const [isFetching, setIsFetching] = useState(false);
+  const [dataSource, setDataSource] = useState<'local' | 'online' | null>(null);
   const [isScanning, setIsScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
   const [scanStatus, setScanStatus] = useState<'scanning' | 'success' | 'failed'>('scanning');
@@ -183,7 +185,8 @@ export default function App() {
     format: 'bluray',
     actors: [],
     tags: [],
-    seasons: []
+    seasons: [],
+    barcode: ''
   });
 
   useEffect(() => {
@@ -215,6 +218,7 @@ export default function App() {
     const db = await getDB();
     const newItem: MediaItem = {
       id: isEditing && formData.id ? formData.id : crypto.randomUUID(),
+      barcode: formData.barcode,
       title: formData.title,
       type: formData.type as any,
       format: formData.format as any,
@@ -231,10 +235,27 @@ export default function App() {
       xp: formData.type === 'movie' ? 50 : 30 + (formData.seasons?.length || 0) * 20
     };
     await db.put('collection', newItem);
+    
+    // Cache the barcode if available
+    if (newItem.barcode) {
+      await cacheBarcode({
+        barcode: newItem.barcode,
+        title: newItem.title,
+        year: newItem.year,
+        format: newItem.format,
+        image: newItem.image,
+        type: newItem.type,
+        genre: newItem.genre,
+        rating: newItem.rating,
+        description: newItem.description,
+        actors: newItem.actors
+      });
+    }
+
     setIsAdding(false);
     setIsEditing(false);
     setAddFlowStep(null);
-    setFormData({ type: 'movie', format: 'bluray', actors: [], tags: [], seasons: [] });
+    setFormData({ type: 'movie', format: 'bluray', actors: [], tags: [], seasons: [], barcode: '' });
     loadData();
     if (selectedItem) setSelectedItem(newItem);
   };
@@ -266,11 +287,30 @@ export default function App() {
     if (!barcode) return;
     setManualBarcode('');
     setAddFlowStep('full-form');
-    if (!navigator.onLine) {
-      setFormData(prev => ({ ...prev, title: `Barcode: ${barcode}` }));
+    
+    // 1. Check local cache first
+    const cached = await getCachedBarcode(barcode);
+    if (cached) {
+      setDataSource('local');
+      setFormData({
+        ...cached,
+        barcode: barcode,
+        tags: [],
+        seasons: []
+      });
       setIsAdding(true);
       return;
     }
+
+    // 2. If not found in cache, check online
+    if (!navigator.onLine) {
+      setDataSource(null);
+      setFormData(prev => ({ ...prev, title: `Barcode: ${barcode}`, barcode }));
+      setIsAdding(true);
+      return;
+    }
+
+    setDataSource('online');
     setIsFetching(true);
     setIsAdding(true);
     const data = await fetchByBarcode(barcode);
@@ -279,7 +319,7 @@ export default function App() {
       if (data.imageUrl) {
         base64Image = await urlToBase64(data.imageUrl);
       }
-      setFormData({
+      const resultData = {
         title: data.title,
         type: data.type || 'movie',
         format: data.format || 'bluray',
@@ -289,11 +329,27 @@ export default function App() {
         description: data.description,
         actors: data.actors,
         image: base64Image,
+        barcode: barcode,
         tags: [],
         seasons: []
+      };
+      setFormData(resultData);
+      
+      // Cache the result
+      await cacheBarcode({
+        barcode: barcode,
+        title: data.title,
+        year: data.year,
+        format: data.format || 'bluray',
+        image: base64Image,
+        type: data.type || 'movie',
+        genre: data.genre,
+        rating: data.rating,
+        description: data.description,
+        actors: data.actors
       });
     } else {
-      setFormData(prev => ({ ...prev, title: `Barcode: ${barcode}` }));
+      setFormData(prev => ({ ...prev, title: `Barcode: ${barcode}`, barcode }));
     }
     setIsFetching(false);
   };
@@ -437,7 +493,7 @@ export default function App() {
             {!settings.showBottomNav && (
               <div className="flex gap-2">
                 <button 
-                  onClick={() => { setAddFlowStep('menu'); setIsAdding(true); }}
+                  onClick={() => { setAddFlowStep('menu'); setIsAdding(true); setDataSource(null); }}
                   className="p-3 bg-orange-500 text-white rounded-2xl shadow-lg shadow-orange-500/20 btn-tactile"
                 >
                   <Plus size={20} strokeWidth={3} />
@@ -685,7 +741,7 @@ export default function App() {
               <div className="flex justify-between items-center">
                 <h2 className="text-3xl font-black italic uppercase tracking-tightest font-display">{isEditing ? 'Edit Item' : 'Vault Entry'}</h2>
                 <button 
-                  onClick={() => { setIsAdding(false); setIsEditing(false); setAddFlowStep(null); }} 
+                  onClick={() => { setIsAdding(false); setIsEditing(false); setAddFlowStep(null); setDataSource(null); }} 
                   className="p-3 bg-zinc-900/50 border border-zinc-800/50 rounded-2xl text-zinc-400 btn-tactile"
                 >
                   <X size={20} />
@@ -904,33 +960,47 @@ export default function App() {
                   )}
 
                   {/* Image Upload */}
-                  <div className="aspect-[2/3] w-56 mx-auto bg-zinc-900/50 rounded-[2.5rem] border-2 border-dashed border-zinc-800/50 flex flex-col items-center justify-center relative overflow-hidden group soft-shadow btn-tactile">
-                {formData.image ? (
-                  <>
-                    <img src={formData.image} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                    <button onClick={() => setFormData({...formData, image: undefined})} className="absolute top-4 right-4 p-2 bg-black/60 backdrop-blur-md rounded-full text-white btn-tactile">
-                      <X size={16} />
-                    </button>
-                  </>
-                ) : (
-                  <label className="flex flex-col items-center cursor-pointer w-full h-full justify-center">
-                    <Camera size={40} strokeWidth={1.5} className="text-zinc-700 mb-3" />
-                    <span className="text-[10px] font-black uppercase text-zinc-600 tracking-widest">Add Artwork</span>
-                    <input 
-                      type="file" 
-                      accept="image/*" 
-                      className="hidden" 
-                      onChange={async (e) => {
-                        const file = e.target.files?.[0];
-                        if (file) {
-                          const compressed = await compressImage(file);
-                          setFormData({...formData, image: compressed});
-                        }
-                      }}
-                    />
-                  </label>
-                )}
-              </div>
+                  <div className="relative">
+                    <div className="aspect-[2/3] w-56 mx-auto bg-zinc-900/50 rounded-[2.5rem] border-2 border-dashed border-zinc-800/50 flex flex-col items-center justify-center relative overflow-hidden group soft-shadow btn-tactile">
+                      {formData.image ? (
+                        <>
+                          <img src={formData.image} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                          <button onClick={() => setFormData({...formData, image: undefined})} className="absolute top-4 right-4 p-2 bg-black/60 backdrop-blur-md rounded-full text-white btn-tactile">
+                            <X size={16} />
+                          </button>
+                        </>
+                      ) : (
+                        <label className="flex flex-col items-center cursor-pointer w-full h-full justify-center">
+                          <Camera size={40} strokeWidth={1.5} className="text-zinc-700 mb-3" />
+                          <span className="text-[10px] font-black uppercase text-zinc-600 tracking-widest">Add Artwork</span>
+                          <input 
+                            type="file" 
+                            accept="image/*" 
+                            className="hidden" 
+                            onChange={async (e) => {
+                              const file = e.target.files?.[0];
+                              if (file) {
+                                const compressed = await compressImage(file);
+                                setFormData({...formData, image: compressed});
+                              }
+                            }}
+                          />
+                        </label>
+                      )}
+                    </div>
+                    {dataSource && (
+                      <motion.div 
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="absolute -bottom-3 left-1/2 -translate-x-1/2 bg-zinc-900 border border-zinc-800 px-4 py-1.5 rounded-full shadow-xl flex items-center gap-2 z-10"
+                      >
+                        <div className={cn("w-1.5 h-1.5 rounded-full", dataSource === 'local' ? "bg-green-500" : "bg-blue-500")} />
+                        <span className="text-[9px] font-black uppercase tracking-widest text-zinc-400">
+                          {dataSource === 'local' ? 'Found Locally' : 'Fetched Online'}
+                        </span>
+                      </motion.div>
+                    )}
+                  </div>
 
               {/* Form Fields */}
               <div className="space-y-6">
@@ -1265,6 +1335,7 @@ export default function App() {
           theme={settings.theme} 
           setAddFlowStep={setAddFlowStep}
           setIsAdding={setIsAdding}
+          setDataSource={setDataSource}
         />
       )}
     </div>

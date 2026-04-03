@@ -2,6 +2,7 @@ import { openDB, DBSchema, IDBPDatabase } from 'idb';
 
 export interface MediaItem {
   id: string;
+  barcode?: string;
   type: 'movie' | 'tv';
   title: string;
   format: 'dvd' | 'bluray' | '4k';
@@ -32,6 +33,21 @@ interface CineVaultDB extends DBSchema {
     key: string;
     value: any;
   };
+  barcodeCache: {
+    key: string;
+    value: {
+      barcode: string;
+      title: string;
+      year?: string;
+      format: string;
+      image?: string;
+      type: 'movie' | 'tv';
+      genre?: string;
+      rating?: string;
+      description?: string;
+      actors: string[];
+    };
+  };
 }
 
 export type ThemeType = 'dark' | 'paper' | 'glass' | 'wood' | 'metal' | 'fabric';
@@ -49,16 +65,31 @@ let dbPromise: Promise<IDBPDatabase<CineVaultDB>> | null = null;
 
 export const getDB = () => {
   if (!dbPromise) {
-    dbPromise = openDB<CineVaultDB>('cinevault-db', 1, {
-      upgrade(db) {
-        const store = db.createObjectStore('collection', { keyPath: 'id' });
-        store.createIndex('by-date', 'addedAt');
-        store.createIndex('by-type', 'type');
-        db.createObjectStore('settings');
+    dbPromise = openDB<CineVaultDB>('cinevault-db', 2, {
+      upgrade(db, oldVersion) {
+        if (oldVersion < 1) {
+          const store = db.createObjectStore('collection', { keyPath: 'id' });
+          store.createIndex('by-date', 'addedAt');
+          store.createIndex('by-type', 'type');
+          db.createObjectStore('settings');
+        }
+        if (oldVersion < 2) {
+          db.createObjectStore('barcodeCache', { keyPath: 'barcode' });
+        }
       },
     });
   }
   return dbPromise;
+};
+
+export const getCachedBarcode = async (barcode: string) => {
+  const db = await getDB();
+  return db.get('barcodeCache', barcode);
+};
+
+export const cacheBarcode = async (data: CineVaultDB['barcodeCache']['value']) => {
+  const db = await getDB();
+  await db.put('barcodeCache', data);
 };
 
 export const getSettings = async (): Promise<AppSettings> => {
