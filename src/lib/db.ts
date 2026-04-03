@@ -8,6 +8,10 @@ export interface MediaItem {
   image?: string; // Base64 compressed
   actors: string[];
   tags: string[];
+  year?: string;
+  genre?: string;
+  rating?: string;
+  amazonUrl?: string;
   seasons?: {
     number: number;
     image?: string;
@@ -32,6 +36,13 @@ interface CineVaultDB extends DBSchema {
 export type ThemeType = 'dark' | 'paper' | 'glass' | 'wood' | 'metal' | 'fabric';
 export type DisplayMode = 'normal' | 'minimal' | 'text';
 
+export interface AppSettings {
+  theme: ThemeType;
+  displayMode: DisplayMode;
+  enableAmazonLinks: boolean;
+  enableImdbData: boolean;
+}
+
 let dbPromise: Promise<IDBPDatabase<CineVaultDB>> | null = null;
 
 export const getDB = () => {
@@ -48,24 +59,18 @@ export const getDB = () => {
   return dbPromise;
 };
 
-export const getTheme = async (): Promise<ThemeType> => {
+export const getSettings = async (): Promise<AppSettings> => {
   const db = await getDB();
-  return (await db.get('settings', 'theme')) || 'dark';
+  const theme = (await db.get('settings', 'theme')) || 'dark';
+  const displayMode = (await db.get('settings', 'displayMode')) || 'normal';
+  const enableAmazonLinks = (await db.get('settings', 'enableAmazonLinks')) ?? true;
+  const enableImdbData = (await db.get('settings', 'enableImdbData')) ?? true;
+  return { theme, displayMode, enableAmazonLinks, enableImdbData };
 };
 
-export const setTheme = async (theme: ThemeType) => {
+export const updateSetting = async (key: keyof AppSettings, value: any) => {
   const db = await getDB();
-  await db.put('settings', theme, 'theme');
-};
-
-export const getDisplayMode = async (): Promise<DisplayMode> => {
-  const db = await getDB();
-  return (await db.get('settings', 'displayMode')) || 'normal';
-};
-
-export const setDisplayMode = async (mode: DisplayMode) => {
-  const db = await getDB();
-  await db.put('settings', mode, 'displayMode');
+  await db.put('settings', value, key);
 };
 
 export const compressImage = (file: File, maxWidth = 400): Promise<string> => {

@@ -18,10 +18,17 @@ import {
   Zap,
   LayoutGrid,
   List,
-  Maximize2
+  Maximize2,
+  Edit2,
+  ExternalLink,
+  Star,
+  Calendar,
+  Tag as TagIcon,
+  Globe
 } from 'lucide-react';
-import { getDB, MediaItem, compressImage, calculateLevel, getTheme, setTheme, ThemeType, getDisplayMode, setDisplayMode, DisplayMode } from './lib/db';
+import { getDB, MediaItem, compressImage, calculateLevel, getSettings, updateSetting, ThemeType, DisplayMode, AppSettings } from './lib/db';
 import { cn } from './lib/utils';
+import { fetchMediaInfo, getAmazonUkLink, urlToBase64 } from './lib/gemini';
 
 // --- Components ---
 
@@ -128,9 +135,15 @@ export default function App() {
   const [isAdding, setIsAdding] = useState(false);
   const [selectedItem, setSelectedItem] = useState<MediaItem | null>(null);
   const [stats, setStats] = useState({ totalXp: 0, count: 0 });
-  const [theme, setThemeState] = useState<ThemeType>('dark');
-  const [displayMode, setDisplayModeState] = useState<DisplayMode>('normal');
+  const [settings, setSettings] = useState<AppSettings>({
+    theme: 'dark',
+    displayMode: 'normal',
+    enableAmazonLinks: true,
+    enableImdbData: true
+  });
   const [isQuickAdding, setIsQuickAdding] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [isFetching, setIsFetching] = useState(false);
 
   // Form State
   const [formData, setFormData] = useState<Partial<MediaItem>>({
@@ -147,20 +160,13 @@ export default function App() {
   }, []);
 
   const loadSettings = async () => {
-    const t = await getTheme();
-    const m = await getDisplayMode();
-    setThemeState(t);
-    setDisplayModeState(m);
+    const s = await getSettings();
+    setSettings(s);
   };
 
-  const handleThemeChange = async (t: ThemeType) => {
-    setThemeState(t);
-    await setTheme(t);
-  };
-
-  const handleDisplayModeChange = async (m: DisplayMode) => {
-    setDisplayModeState(m);
-    await setDisplayMode(m);
+  const handleSettingChange = async (key: keyof AppSettings, value: any) => {
+    setSettings(prev => ({ ...prev, [key]: value }));
+    await updateSetting(key, value);
   };
 
   const loadData = async () => {
@@ -176,22 +182,49 @@ export default function App() {
     if (!formData.title) return;
     const db = await getDB();
     const newItem: MediaItem = {
-      id: crypto.randomUUID(),
+      id: isEditing && formData.id ? formData.id : crypto.randomUUID(),
       title: formData.title,
       type: formData.type as any,
       format: formData.format as any,
       image: formData.image,
       actors: formData.actors || [],
       tags: formData.tags || [],
+      year: formData.year,
+      genre: formData.genre,
+      rating: formData.rating,
+      amazonUrl: formData.amazonUrl || getAmazonUkLink(formData.title, formData.format || 'bluray'),
       seasons: formData.seasons || [],
-      addedAt: Date.now(),
+      addedAt: isEditing && formData.addedAt ? formData.addedAt : Date.now(),
       xp: formData.type === 'movie' ? 50 : 30 + (formData.seasons?.length || 0) * 20
     };
     await db.put('collection', newItem);
     setIsAdding(false);
+    setIsEditing(false);
     setIsQuickAdding(false);
     setFormData({ type: 'movie', format: 'bluray', actors: [], tags: [], seasons: [] });
     loadData();
+    if (selectedItem) setSelectedItem(newItem);
+  };
+
+  const handleFetchInfo = async () => {
+    if (!formData.title || isFetching) return;
+    setIsFetching(true);
+    const data = await fetchMediaInfo(formData.title, formData.type as any);
+    if (data) {
+      let base64Image = formData.image;
+      if (data.imageUrl) {
+        base64Image = await urlToBase64(data.imageUrl);
+      }
+      setFormData(prev => ({
+        ...prev,
+        year: data.year,
+        genre: data.genre,
+        rating: data.rating,
+        actors: [...new Set([...(prev.actors || []), ...data.actors])],
+        image: base64Image || prev.image
+      }));
+    }
+    setIsFetching(false);
   };
 
   const handleDeleteItem = async (id: string) => {
@@ -206,7 +239,9 @@ export default function App() {
     const allItems = await db.getAll('collection');
     const dataStr = JSON.stringify(allItems);
     const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
-    const exportFileDefaultName = 'cinevault_backup.json';
+    const now = new Date();
+    const timestamp = now.toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const exportFileDefaultName = `cinevault_backup_${timestamp}.json`;
     const linkElement = document.createElement('a');
     linkElement.setAttribute('href', dataUri);
     linkElement.setAttribute('download', exportFileDefaultName);
@@ -254,22 +289,22 @@ export default function App() {
   return (
     <div className={cn(
       "min-h-screen font-sans selection:bg-orange-500/30 pb-24 transition-colors duration-500",
-      theme === 'dark' ? "bg-black text-zinc-100" : `theme-${theme}`
+      settings.theme === 'dark' ? "bg-black text-zinc-100" : `theme-${settings.theme}`
     )}>
       {/* Header / Stats */}
       <header className={cn(
         "p-6 pt-12 border-b",
-        theme === 'dark' ? "bg-gradient-to-b from-zinc-900 to-black border-zinc-800/50" : "bg-transparent border-black/10"
+        settings.theme === 'dark' ? "bg-gradient-to-b from-zinc-900 to-black border-zinc-800/50" : "bg-transparent border-black/10"
       )}>
         <div className="flex justify-between items-start mb-6">
           <div>
             <h1 className={cn(
               "text-3xl font-black tracking-tighter italic uppercase",
-              theme === 'dark' ? "text-white" : "text-inherit"
+              settings.theme === 'dark' ? "text-white" : "text-inherit"
             )}>CineVault</h1>
             <p className={cn(
               "text-xs font-bold uppercase tracking-widest mt-1",
-              theme === 'dark' ? "text-zinc-500" : "opacity-60"
+              settings.theme === 'dark' ? "text-zinc-500" : "opacity-60"
             )}>{title}</p>
           </div>
           <div className="flex flex-col items-end">
@@ -279,7 +314,7 @@ export default function App() {
             </div>
             <p className={cn(
               "text-[10px] font-mono mt-1 uppercase",
-              theme === 'dark' ? "text-zinc-500" : "opacity-60"
+              settings.theme === 'dark' ? "text-zinc-500" : "opacity-60"
             )}>{stats.totalXp} / {nextLevelXp} XP</p>
           </div>
         </div>
@@ -292,13 +327,13 @@ export default function App() {
           <div className="space-y-6">
             {/* Search */}
             <div className="relative">
-              <Search className={cn("absolute left-3 top-1/2 -translate-y-1/2", theme === 'dark' ? "text-zinc-500" : "opacity-50")} size={18} />
+              <Search className={cn("absolute left-3 top-1/2 -translate-y-1/2", settings.theme === 'dark' ? "text-zinc-500" : "opacity-50")} size={18} />
               <input 
                 type="text" 
                 placeholder="Search by title, actor, or tag..." 
                 className={cn(
                   "w-full border rounded-xl py-3 pl-10 pr-4 text-sm focus:outline-none focus:border-orange-500 transition-all",
-                  theme === 'dark' ? "bg-zinc-900 border-zinc-800" : "glass-card border-black/10"
+                  settings.theme === 'dark' ? "bg-zinc-900 border-zinc-800" : "glass-card border-black/10"
                 )}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
@@ -308,13 +343,13 @@ export default function App() {
             {/* Grid */}
             <div className={cn(
               "grid gap-4",
-              displayMode === 'normal' && "grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6",
-              displayMode === 'minimal' && "grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2",
-              displayMode === 'text' && "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3"
+              settings.displayMode === 'normal' && "grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6",
+              settings.displayMode === 'minimal' && "grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2",
+              settings.displayMode === 'text' && "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3"
             )}>
               <AnimatePresence mode="popLayout">
                 {filteredItems.map(item => (
-                  <MediaCard key={item.id} item={item} onClick={() => setSelectedItem(item)} theme={theme} mode={displayMode} />
+                  <MediaCard key={item.id} item={item} onClick={() => setSelectedItem(item)} theme={settings.theme} mode={settings.displayMode} />
                 ))}
               </AnimatePresence>
             </div>
@@ -341,10 +376,10 @@ export default function App() {
                 {(['dark', 'paper', 'glass', 'wood', 'metal', 'fabric'] as ThemeType[]).map(t => (
                   <button 
                     key={t}
-                    onClick={() => handleThemeChange(t)}
+                    onClick={() => handleSettingChange('theme', t)}
                     className={cn(
                       "flex flex-col items-center gap-2 p-3 rounded-xl border transition-all active:scale-95",
-                      theme === t ? "border-orange-500 bg-orange-500/10" : "border-zinc-800 bg-zinc-900/50"
+                      settings.theme === t ? "border-orange-500 bg-orange-500/10" : "border-zinc-800 bg-zinc-900/50"
                     )}
                   >
                     <div className={cn("w-full aspect-square rounded-lg border border-white/10", `theme-${t}`, t === 'dark' && "bg-black")} />
@@ -365,23 +400,61 @@ export default function App() {
                 ].map(m => (
                   <button 
                     key={m.id}
-                    onClick={() => handleDisplayModeChange(m.id as DisplayMode)}
+                    onClick={() => handleSettingChange('displayMode', m.id as DisplayMode)}
                     className={cn(
                       "flex flex-col items-center gap-2 p-3 rounded-xl border transition-all active:scale-95",
-                      displayMode === m.id ? "border-orange-500 bg-orange-500/10" : "border-zinc-800 bg-zinc-900/50"
+                      settings.displayMode === m.id ? "border-orange-500 bg-orange-500/10" : "border-zinc-800 bg-zinc-900/50"
                     )}
                   >
-                    <m.icon size={20} className={displayMode === m.id ? "text-orange-500" : "text-zinc-500"} />
+                    <m.icon size={20} className={settings.displayMode === m.id ? "text-orange-500" : "text-zinc-500"} />
                     <span className="text-[10px] font-bold uppercase">{m.label}</span>
                   </button>
                 ))}
+              </div>
+            </div>
+
+            {/* Feature Toggles */}
+            <div>
+              <h3 className="text-[10px] font-bold uppercase opacity-50 mb-3 tracking-widest">Feature Toggles</h3>
+              <div className="space-y-2">
+                <button 
+                  onClick={() => handleSettingChange('enableAmazonLinks', !settings.enableAmazonLinks)}
+                  className={cn(
+                    "w-full flex items-center justify-between p-4 rounded-xl border transition-all",
+                    settings.theme === 'dark' ? "bg-zinc-900 border-zinc-800" : "glass-card border-black/10"
+                  )}
+                >
+                  <div className="flex items-center gap-3">
+                    <Globe size={20} className={settings.enableAmazonLinks ? "text-orange-500" : "text-zinc-500"} />
+                    <span className="font-medium">Amazon UK Links</span>
+                  </div>
+                  <div className={cn("w-10 h-5 rounded-full relative transition-colors", settings.enableAmazonLinks ? "bg-orange-500" : "bg-zinc-700")}>
+                    <div className={cn("absolute top-1 w-3 h-3 bg-white rounded-full transition-all", settings.enableAmazonLinks ? "right-1" : "left-1")} />
+                  </div>
+                </button>
+
+                <button 
+                  onClick={() => handleSettingChange('enableImdbData', !settings.enableImdbData)}
+                  className={cn(
+                    "w-full flex items-center justify-between p-4 rounded-xl border transition-all",
+                    settings.theme === 'dark' ? "bg-zinc-900 border-zinc-800" : "glass-card border-black/10"
+                  )}
+                >
+                  <div className="flex items-center gap-3">
+                    <Star size={20} className={settings.enableImdbData ? "text-yellow-500" : "text-zinc-500"} />
+                    <span className="font-medium">IMDb Data Fetching</span>
+                  </div>
+                  <div className={cn("w-10 h-5 rounded-full relative transition-colors", settings.enableImdbData ? "bg-orange-500" : "bg-zinc-700")}>
+                    <div className={cn("absolute top-1 w-3 h-3 bg-white rounded-full transition-all", settings.enableImdbData ? "right-1" : "left-1")} />
+                  </div>
+                </button>
               </div>
             </div>
             
             <div className="space-y-2">
               <button onClick={() => window.location.reload()} className={cn(
                 "w-full flex items-center justify-between p-4 rounded-xl border active:scale-[0.98] transition-all",
-                theme === 'dark' ? "bg-zinc-900 border-zinc-800" : "glass-card border-black/10"
+                settings.theme === 'dark' ? "bg-zinc-900 border-zinc-800" : "glass-card border-black/10"
               )}>
                 <div className="flex items-center gap-3">
                   <RefreshCw size={20} className="text-blue-500" />
@@ -392,7 +465,7 @@ export default function App() {
 
               <button onClick={handleExport} className={cn(
                 "w-full flex items-center justify-between p-4 rounded-xl border active:scale-[0.98] transition-all",
-                theme === 'dark' ? "bg-zinc-900 border-zinc-800" : "glass-card border-black/10"
+                settings.theme === 'dark' ? "bg-zinc-900 border-zinc-800" : "glass-card border-black/10"
               )}>
                 <div className="flex items-center gap-3">
                   <Download size={20} className="text-green-500" />
@@ -403,7 +476,7 @@ export default function App() {
 
               <label className={cn(
                 "w-full flex items-center justify-between p-4 rounded-xl border active:scale-[0.98] transition-all cursor-pointer",
-                theme === 'dark' ? "bg-zinc-900 border-zinc-800" : "glass-card border-black/10"
+                settings.theme === 'dark' ? "bg-zinc-900 border-zinc-800" : "glass-card border-black/10"
               )}>
                 <div className="flex items-center gap-3">
                   <Upload size={20} className="text-purple-500" />
@@ -415,7 +488,7 @@ export default function App() {
 
               <button onClick={clearCache} className={cn(
                 "w-full flex items-center justify-between p-4 rounded-xl border active:scale-[0.98] transition-all",
-                theme === 'dark' ? "bg-zinc-900 border-zinc-800" : "glass-card border-black/10"
+                settings.theme === 'dark' ? "bg-zinc-900 border-zinc-800" : "glass-card border-black/10"
               )}>
                 <div className="flex items-center gap-3">
                   <Trash2 size={20} className="text-red-500" />
@@ -432,9 +505,9 @@ export default function App() {
         )}
       </main>
 
-      {/* Add Modal */}
+      {/* Add / Edit Modal */}
       <AnimatePresence>
-        {(activeTab === 'add' || isAdding) && (
+        {(activeTab === 'add' || isAdding || isEditing) && (
           <motion.div 
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -443,8 +516,8 @@ export default function App() {
           >
             <div className="max-w-md mx-auto space-y-6 pb-12">
               <div className="flex justify-between items-center">
-                <h2 className="text-2xl font-black italic uppercase tracking-tighter">Add to Vault</h2>
-                <button onClick={() => { setIsAdding(false); setActiveTab('library'); }} className="p-2 bg-zinc-800 rounded-full">
+                <h2 className="text-2xl font-black italic uppercase tracking-tighter">{isEditing ? 'Edit Item' : 'Add to Vault'}</h2>
+                <button onClick={() => { setIsAdding(false); setIsEditing(false); setActiveTab('library'); }} className="p-2 bg-zinc-800 rounded-full">
                   <X size={20} />
                 </button>
               </div>
@@ -480,15 +553,26 @@ export default function App() {
 
               {/* Form Fields */}
               <div className="space-y-4">
-                <div>
-                  <label className="text-[10px] font-bold uppercase text-zinc-500 ml-1">Title</label>
-                  <input 
-                    type="text" 
-                    placeholder="Enter movie or show title..." 
-                    className="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-4 text-sm focus:outline-none focus:border-orange-500"
-                    value={formData.title || ''}
-                    onChange={(e) => setFormData({...formData, title: e.target.value})}
-                  />
+                <div className="flex gap-2">
+                  <div className="flex-1">
+                    <label className="text-[10px] font-bold uppercase text-zinc-500 ml-1">Title</label>
+                    <input 
+                      type="text" 
+                      placeholder="Enter movie or show title..." 
+                      className="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-4 text-sm focus:outline-none focus:border-orange-500"
+                      value={formData.title || ''}
+                      onChange={(e) => setFormData({...formData, title: e.target.value})}
+                    />
+                  </div>
+                  {settings.enableImdbData && (
+                    <button 
+                      onClick={handleFetchInfo}
+                      disabled={isFetching || !formData.title}
+                      className="mt-5 bg-zinc-800 p-4 rounded-xl text-orange-500 disabled:opacity-50"
+                    >
+                      {isFetching ? <RefreshCw size={20} className="animate-spin" /> : <Zap size={20} />}
+                    </button>
+                  )}
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
@@ -519,11 +603,34 @@ export default function App() {
                   </div>
                 </div>
 
+                <div className="grid grid-cols-3 gap-4">
+                  <div>
+                    <label className="text-[10px] font-bold uppercase text-zinc-500 ml-1">Year</label>
+                    <input 
+                      type="text" 
+                      placeholder="2024" 
+                      className="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-3 text-sm focus:outline-none focus:border-orange-500"
+                      value={formData.year || ''}
+                      onChange={(e) => setFormData({...formData, year: e.target.value})}
+                    />
+                  </div>
+                  <div className="col-span-2">
+                    <label className="text-[10px] font-bold uppercase text-zinc-500 ml-1">Genre</label>
+                    <input 
+                      type="text" 
+                      placeholder="Action, Sci-Fi" 
+                      className="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-3 text-sm focus:outline-none focus:border-orange-500"
+                      value={formData.genre || ''}
+                      onChange={(e) => setFormData({...formData, genre: e.target.value})}
+                    />
+                  </div>
+                </div>
+
                 {formData.type === 'tv' && (
                   <div>
                     <label className="text-[10px] font-bold uppercase text-zinc-500 ml-1">Seasons Added</label>
                     <div className="flex flex-wrap gap-2 mt-2">
-                      {[1,2,3,4,5,6,7,8,9,10].map(s => (
+                      {[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15].map(s => (
                         <button 
                           key={s}
                           onClick={() => {
@@ -551,7 +658,8 @@ export default function App() {
                     type="text" 
                     placeholder="Tom Cruise, Brad Pitt..." 
                     className="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-4 text-sm focus:outline-none focus:border-orange-500"
-                    onChange={(e) => setFormData({...formData, actors: e.target.value.split(',').map(s => s.trim())})}
+                    value={formData.actors?.join(', ') || ''}
+                    onChange={(e) => setFormData({...formData, actors: e.target.value.split(',').map(s => s.trim()).filter(Boolean)})}
                   />
                 </div>
 
@@ -561,7 +669,19 @@ export default function App() {
                     type="text" 
                     placeholder="Action, Sci-Fi, Steelbook..." 
                     className="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-4 text-sm focus:outline-none focus:border-orange-500"
-                    onChange={(e) => setFormData({...formData, tags: e.target.value.split(',').map(s => s.trim())})}
+                    value={formData.tags?.join(', ') || ''}
+                    onChange={(e) => setFormData({...formData, tags: e.target.value.split(',').map(s => s.trim()).filter(Boolean)})}
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-bold uppercase text-zinc-500 ml-1">Amazon UK Link (Optional)</label>
+                  <input 
+                    type="text" 
+                    placeholder="https://www.amazon.co.uk/..." 
+                    className="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-4 text-sm focus:outline-none focus:border-orange-500"
+                    value={formData.amazonUrl || ''}
+                    onChange={(e) => setFormData({...formData, amazonUrl: e.target.value})}
                   />
                 </div>
 
@@ -569,7 +689,7 @@ export default function App() {
                   onClick={handleAddItem}
                   className="w-full bg-orange-500 text-white font-black italic uppercase py-4 rounded-xl shadow-lg shadow-orange-500/20 active:scale-[0.98] transition-all"
                 >
-                  Add to Collection (+XP)
+                  {isEditing ? 'Update Vault' : 'Add to Vault (+XP)'}
                 </button>
               </div>
             </div>
@@ -586,7 +706,7 @@ export default function App() {
             exit={{ opacity: 0, y: 100 }}
             className={cn(
               "fixed inset-0 z-[70] overflow-y-auto transition-colors duration-500",
-              theme === 'dark' ? "bg-black" : `theme-${theme}`
+              settings.theme === 'dark' ? "bg-black" : `theme-${settings.theme}`
             )}
           >
             <div className="relative aspect-[2/3] w-full max-h-[60vh]">
@@ -595,7 +715,7 @@ export default function App() {
               ) : (
                 <div className={cn(
                   "w-full h-full flex items-center justify-center italic",
-                  theme === 'dark' ? "bg-zinc-900 text-zinc-700" : "bg-black/5 text-inherit opacity-50"
+                  settings.theme === 'dark' ? "bg-zinc-900 text-zinc-700" : "bg-black/5 text-inherit opacity-50"
                 )}>No Image</div>
               )}
               <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
@@ -605,19 +725,57 @@ export default function App() {
             </div>
 
             <div className="p-6 -mt-12 relative space-y-6 pb-12">
-              <div>
-                <div className="flex gap-2 mb-2">
-                  <span className="text-[10px] bg-orange-500 text-white px-2 py-0.5 rounded uppercase font-black italic">{selectedItem.format}</span>
-                  <span className={cn(
-                    "text-[10px] px-2 py-0.5 rounded uppercase font-black italic",
-                    theme === 'dark' ? "bg-zinc-800 text-white" : "bg-black/10 text-inherit"
-                  )}>{selectedItem.type}</span>
+              <div className="flex justify-between items-start">
+                <div>
+                  <div className="flex gap-2 mb-2">
+                    <span className="text-[10px] bg-orange-500 text-white px-2 py-0.5 rounded uppercase font-black italic">{selectedItem.format}</span>
+                    <span className={cn(
+                      "text-[10px] px-2 py-0.5 rounded uppercase font-black italic",
+                      settings.theme === 'dark' ? "bg-zinc-800 text-white" : "bg-black/10 text-inherit"
+                    )}>{selectedItem.type}</span>
+                    {selectedItem.rating && (
+                      <span className="text-[10px] bg-yellow-500 text-black px-2 py-0.5 rounded uppercase font-black italic flex items-center gap-1">
+                        <Star size={8} fill="currentColor" /> {selectedItem.rating}
+                      </span>
+                    )}
+                  </div>
+                  <h2 className={cn(
+                    "text-4xl font-black tracking-tighter italic uppercase leading-none",
+                    settings.theme === 'dark' ? "text-white" : "text-inherit"
+                  )}>{selectedItem.title}</h2>
+                  <div className="flex gap-3 mt-2 opacity-60 text-[10px] font-bold uppercase tracking-widest">
+                    {selectedItem.year && <span className="flex items-center gap-1"><Calendar size={10} /> {selectedItem.year}</span>}
+                    {selectedItem.genre && <span className="flex items-center gap-1"><TagIcon size={10} /> {selectedItem.genre}</span>}
+                  </div>
                 </div>
-                <h2 className={cn(
-                  "text-4xl font-black tracking-tighter italic uppercase leading-none",
-                  theme === 'dark' ? "text-white" : "text-inherit"
-                )}>{selectedItem.title}</h2>
+                <button 
+                  onClick={() => {
+                    setFormData(selectedItem);
+                    setIsEditing(true);
+                  }}
+                  className="p-3 bg-zinc-800 rounded-xl text-orange-500"
+                >
+                  <Edit2 size={20} />
+                </button>
               </div>
+
+              {settings.enableAmazonLinks && (
+                <a 
+                  href={selectedItem.amazonUrl || getAmazonUkLink(selectedItem.title, selectedItem.format)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={cn(
+                    "w-full flex items-center justify-between p-4 rounded-xl border transition-all active:scale-95",
+                    settings.theme === 'dark' ? "bg-zinc-900 border-zinc-800" : "glass-card border-black/10"
+                  )}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 bg-orange-500 rounded-lg flex items-center justify-center text-white font-black italic text-xs">A</div>
+                    <span className="font-bold text-sm">View on Amazon UK</span>
+                  </div>
+                  <ExternalLink size={16} className="text-zinc-600" />
+                </a>
+              )}
 
               {selectedItem.type === 'tv' && selectedItem.seasons && selectedItem.seasons.length > 0 && (
                 <div>
@@ -626,7 +784,7 @@ export default function App() {
                     {selectedItem.seasons.sort((a,b) => a.number - b.number).map(s => (
                       <div key={s.number} className={cn(
                         "border px-4 py-2 rounded-lg text-xs font-bold",
-                        theme === 'dark' ? "bg-zinc-900 border-zinc-800" : "glass-card border-black/10"
+                        settings.theme === 'dark' ? "bg-zinc-900 border-zinc-800" : "glass-card border-black/10"
                       )}>
                         Season {s.number}
                       </div>
@@ -653,7 +811,7 @@ export default function App() {
                     {selectedItem.tags.map(tag => (
                       <span key={tag} className={cn(
                         "px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider border",
-                        theme === 'dark' ? "bg-zinc-900 text-zinc-400 border-zinc-800" : "glass-card border-black/10 opacity-70"
+                        settings.theme === 'dark' ? "bg-zinc-900 text-zinc-400 border-zinc-800" : "glass-card border-black/10 opacity-70"
                       )}>{tag}</span>
                     ))}
                   </div>
@@ -662,7 +820,7 @@ export default function App() {
 
               <div className={cn(
                 "pt-6 border-t flex gap-4",
-                theme === 'dark' ? "border-zinc-800" : "border-black/10"
+                settings.theme === 'dark' ? "border-zinc-800" : "border-black/10"
               )}>
                 <button 
                   onClick={() => handleDeleteItem(selectedItem.id)}
@@ -702,7 +860,7 @@ export default function App() {
               animate={{ scale: 1, y: 0 }}
               className={cn(
                 "w-full max-w-sm rounded-2xl p-6 space-y-4 border shadow-2xl",
-                theme === 'dark' ? "bg-zinc-900 border-zinc-800" : "bg-white border-black/10"
+                settings.theme === 'dark' ? "bg-zinc-900 border-zinc-800" : "bg-white border-black/10"
               )}
             >
               <div className="flex justify-between items-center">
@@ -753,7 +911,7 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      <BottomNav activeTab={activeTab} setActiveTab={setActiveTab} theme={theme} />
+      <BottomNav activeTab={activeTab} setActiveTab={setActiveTab} theme={settings.theme} />
     </div>
   );
 }
