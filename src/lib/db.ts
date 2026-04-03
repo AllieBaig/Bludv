@@ -42,6 +42,7 @@ export interface AppSettings {
   displayMode: DisplayMode;
   enableAmazonLinks: boolean;
   enableImdbData: boolean;
+  showBottomNav: boolean;
 }
 
 let dbPromise: Promise<IDBPDatabase<CineVaultDB>> | null = null;
@@ -66,7 +67,8 @@ export const getSettings = async (): Promise<AppSettings> => {
   const displayMode = (await db.get('settings', 'displayMode')) || 'normal';
   const enableAmazonLinks = (await db.get('settings', 'enableAmazonLinks')) ?? true;
   const enableImdbData = (await db.get('settings', 'enableImdbData')) ?? true;
-  return { theme, displayMode, enableAmazonLinks, enableImdbData };
+  const showBottomNav = (await db.get('settings', 'showBottomNav')) ?? true;
+  return { theme, displayMode, enableAmazonLinks, enableImdbData, showBottomNav };
 };
 
 export const updateSetting = async (key: keyof AppSettings, value: any) => {

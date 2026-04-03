@@ -141,13 +141,15 @@ export default function App() {
     theme: 'dark',
     displayMode: 'normal',
     enableAmazonLinks: true,
-    enableImdbData: true
+    enableImdbData: true,
+    showBottomNav: true
   });
   const [isQuickAdding, setIsQuickAdding] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [isFetching, setIsFetching] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
+  const [scanStatus, setScanStatus] = useState<'scanning' | 'success' | 'failed'>('scanning');
 
   // Form State
   const [formData, setFormData] = useState<Partial<MediaItem>>({
@@ -236,6 +238,7 @@ export default function App() {
 
   const handleScan = async (decodedText: string) => {
     setIsScanning(false);
+    setScanStatus('scanning');
     if (!navigator.onLine) {
       setFormData(prev => ({ ...prev, title: `Barcode: ${decodedText}` }));
       setIsAdding(true);
@@ -271,13 +274,33 @@ export default function App() {
   useEffect(() => {
     let html5QrCode: Html5Qrcode | null = null;
     if (isScanning) {
+      setScanStatus('scanning');
+      setScanError(null);
       html5QrCode = new Html5Qrcode("reader");
+      const config = { 
+        fps: 20, 
+        qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
+          const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
+          const qrboxSize = Math.floor(minEdge * 0.7);
+          return { width: qrboxSize, height: qrboxSize * 0.6 }; // Barcode shape
+        },
+        aspectRatio: 1.0,
+        videoConstraints: {
+          facingMode: "environment",
+          focusMode: "continuous",
+          exposureMode: "continuous"
+        }
+      };
+
       html5QrCode.start(
         { facingMode: "environment" },
-        { fps: 10, qrbox: { width: 250, height: 150 } },
+        config,
         (decodedText) => {
-          handleScan(decodedText);
-          html5QrCode?.stop();
+          setScanStatus('success');
+          setTimeout(() => {
+            handleScan(decodedText);
+            html5QrCode?.stop();
+          }, 500);
         },
         (errorMessage) => {
           // Ignore errors
@@ -360,19 +383,46 @@ export default function App() {
     )}>
       {/* Header / Stats */}
       <header className={cn(
-        "p-6 pt-12 border-b",
-        settings.theme === 'dark' ? "bg-gradient-to-b from-zinc-900 to-black border-zinc-800/50" : "bg-transparent border-black/10"
+        "p-6 pt-12 border-b sticky top-0 z-40",
+        settings.theme === 'dark' ? "bg-black/80 backdrop-blur-md border-zinc-800/50" : "bg-white/80 backdrop-blur-md border-black/10"
       )}>
         <div className="flex justify-between items-start mb-6">
-          <div>
-            <h1 className={cn(
-              "text-3xl font-black tracking-tighter italic uppercase",
-              settings.theme === 'dark' ? "text-white" : "text-inherit"
-            )}>CineVault</h1>
-            <p className={cn(
-              "text-xs font-bold uppercase tracking-widest mt-1",
-              settings.theme === 'dark' ? "text-zinc-500" : "opacity-60"
-            )}>{title}</p>
+          <div className="flex items-center gap-3">
+            <div>
+              <h1 className={cn(
+                "text-3xl font-black tracking-tighter italic uppercase",
+                settings.theme === 'dark' ? "text-white" : "text-inherit"
+              )}>CineVault</h1>
+              <p className={cn(
+                "text-xs font-bold uppercase tracking-widest mt-1",
+                settings.theme === 'dark' ? "text-zinc-500" : "opacity-60"
+              )}>{title}</p>
+            </div>
+            {!settings.showBottomNav && (
+              <div className="flex gap-2">
+                <button 
+                  onClick={() => setIsScanning(true)}
+                  className="p-2 bg-orange-500 text-white rounded-full transition-all active:scale-90"
+                >
+                  <Barcode size={18} />
+                </button>
+                <button 
+                  onClick={() => setIsQuickAdding(true)}
+                  className="p-2 bg-zinc-800 text-orange-500 rounded-full transition-all active:scale-90"
+                >
+                  <Zap size={18} />
+                </button>
+                <button 
+                  onClick={() => setActiveTab(activeTab === 'settings' ? 'library' : 'settings')}
+                  className={cn(
+                    "p-2 rounded-full transition-colors",
+                    activeTab === 'settings' ? "bg-orange-500 text-white" : "bg-zinc-800 text-zinc-400"
+                  )}
+                >
+                  <SettingsIcon size={18} />
+                </button>
+              </div>
+            )}
           </div>
           <div className="flex flex-col items-end">
             <div className="flex items-center gap-2 text-orange-500">
@@ -526,6 +576,22 @@ export default function App() {
                     <div className={cn("absolute top-1 w-3 h-3 bg-white rounded-full transition-all", settings.enableImdbData ? "right-1" : "left-1")} />
                   </div>
                 </button>
+
+                <button 
+                  onClick={() => handleSettingChange('showBottomNav', !settings.showBottomNav)}
+                  className={cn(
+                    "w-full flex items-center justify-between p-4 rounded-xl border transition-all",
+                    settings.theme === 'dark' ? "bg-zinc-900 border-zinc-800" : "glass-card border-black/10"
+                  )}
+                >
+                  <div className="flex items-center gap-3">
+                    <LayoutGrid size={20} className={settings.showBottomNav ? "text-blue-500" : "text-zinc-500"} />
+                    <span className="font-medium">Bottom Menu</span>
+                  </div>
+                  <div className={cn("w-10 h-5 rounded-full relative transition-colors", settings.showBottomNav ? "bg-orange-500" : "bg-zinc-700")}>
+                    <div className={cn("absolute top-1 w-3 h-3 bg-white rounded-full transition-all", settings.showBottomNav ? "right-1" : "left-1")} />
+                  </div>
+                </button>
               </div>
             </div>
             
@@ -611,20 +677,69 @@ export default function App() {
               </div>
 
               {isScanning && (
-                <div className="fixed inset-0 z-[100] bg-black flex flex-col items-center justify-center p-6">
-                  <div className="w-full max-w-sm aspect-square bg-zinc-900 rounded-2xl overflow-hidden relative border-2 border-orange-500">
+                <div className="fixed inset-0 z-[100] bg-black flex flex-col items-center justify-center p-6 overflow-hidden">
+                  <div className="w-full max-w-sm aspect-square bg-zinc-900 rounded-2xl overflow-hidden relative border-2 border-orange-500 shadow-2xl shadow-orange-500/20">
                     <div id="reader" className="w-full h-full"></div>
-                    <div className="absolute inset-0 border-[40px] border-black/50 pointer-events-none">
-                      <div className="w-full h-full border-2 border-orange-500/50 rounded-lg"></div>
+                    
+                    {/* Centered Scan Area Overlay */}
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                      <div className="w-[70%] h-[42%] border-2 border-orange-500 rounded-lg relative overflow-hidden">
+                        {/* Scanning Line Animation */}
+                        {scanStatus === 'scanning' && (
+                          <motion.div 
+                            initial={{ top: '0%' }}
+                            animate={{ top: '100%' }}
+                            transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+                            className="absolute left-0 right-0 h-0.5 bg-orange-500 shadow-[0_0_10px_rgba(249,115,22,0.8)] z-10"
+                          />
+                        )}
+                        
+                        {/* Corner Accents */}
+                        <div className="absolute top-0 left-0 w-4 h-4 border-t-4 border-l-4 border-orange-500 -translate-x-1 -translate-y-1" />
+                        <div className="absolute top-0 right-0 w-4 h-4 border-t-4 border-r-4 border-orange-500 translate-x-1 -translate-y-1" />
+                        <div className="absolute bottom-0 left-0 w-4 h-4 border-b-4 border-l-4 border-orange-500 -translate-x-1 translate-y-1" />
+                        <div className="absolute bottom-0 right-0 w-4 h-4 border-b-4 border-r-4 border-orange-500 translate-x-1 translate-y-1" />
+                      </div>
                     </div>
+
+                    {/* Success Overlay */}
+                    {scanStatus === 'success' && (
+                      <motion.div 
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        className="absolute inset-0 bg-green-500/20 flex items-center justify-center z-20"
+                      >
+                        <div className="bg-green-500 text-white p-4 rounded-full shadow-lg">
+                          <Zap size={32} className="animate-pulse" />
+                        </div>
+                      </motion.div>
+                    )}
                   </div>
-                  <p className="mt-6 text-sm font-bold uppercase tracking-widest text-zinc-400">Scan Barcode</p>
-                  {!navigator.onLine && <p className="mt-2 text-[10px] text-orange-500 font-bold uppercase">Offline Mode: Manual entry after scan</p>}
-                  {scanError && <p className="mt-2 text-xs text-red-500">{scanError}</p>}
-                  <button 
-                    onClick={() => setIsScanning(false)}
-                    className="mt-12 px-8 py-3 bg-zinc-800 rounded-full font-bold uppercase text-xs tracking-widest"
-                  >Cancel</button>
+
+                  <div className="mt-8 text-center space-y-2">
+                    <div className="flex items-center justify-center gap-2">
+                      {scanStatus === 'scanning' && <div className="w-2 h-2 bg-orange-500 rounded-full animate-pulse" />}
+                      <p className={cn(
+                        "text-sm font-bold uppercase tracking-[0.2em]",
+                        scanStatus === 'success' ? "text-green-500" : "text-zinc-400"
+                      )}>
+                        {scanStatus === 'success' ? 'Barcode Detected!' : 'Align Barcode in Frame'}
+                      </p>
+                    </div>
+                    {!navigator.onLine && <p className="text-[10px] text-orange-500 font-bold uppercase tracking-widest">Offline Mode: Manual entry after scan</p>}
+                    {scanError && <p className="text-xs text-red-500 font-medium">{scanError}</p>}
+                  </div>
+
+                  <div className="mt-12 flex gap-4">
+                    <button 
+                      onClick={() => setIsScanning(false)}
+                      className="px-8 py-3 bg-zinc-800 rounded-full font-bold uppercase text-[10px] tracking-widest text-zinc-400 active:scale-95 transition-transform"
+                    >Cancel</button>
+                    <button 
+                      onClick={() => { setScanError(null); setScanStatus('scanning'); setIsScanning(false); setTimeout(() => setIsScanning(true), 100); }}
+                      className="px-8 py-3 bg-orange-500 rounded-full font-bold uppercase text-[10px] tracking-widest text-white active:scale-95 transition-transform"
+                    >Retry</button>
+                  </div>
                 </div>
               )}
 
@@ -1044,7 +1159,9 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      <BottomNav activeTab={activeTab} setActiveTab={setActiveTab} theme={settings.theme} />
+      {settings.showBottomNav && (
+        <BottomNav activeTab={activeTab} setActiveTab={setActiveTab} theme={settings.theme} />
+      )}
     </div>
   );
 }
