@@ -48,6 +48,16 @@ interface CineVaultDB extends DBSchema {
       actors: string[];
     };
   };
+  logs: {
+    key: number;
+    value: {
+      id: number;
+      timestamp: number;
+      event: string;
+      details?: string;
+      type: 'info' | 'success' | 'error';
+    };
+  };
 }
 
 export type ThemeType = 'dark' | 'paper' | 'glass' | 'wood' | 'metal' | 'fabric';
@@ -59,13 +69,14 @@ export interface AppSettings {
   enableAmazonLinks: boolean;
   enableImdbData: boolean;
   showBottomNav: boolean;
+  debugMode: boolean;
 }
 
 let dbPromise: Promise<IDBPDatabase<CineVaultDB>> | null = null;
 
 export const getDB = () => {
   if (!dbPromise) {
-    dbPromise = openDB<CineVaultDB>('cinevault-db', 2, {
+    dbPromise = openDB<CineVaultDB>('cinevault-db', 3, {
       upgrade(db, oldVersion) {
         if (oldVersion < 1) {
           const store = db.createObjectStore('collection', { keyPath: 'id' });
@@ -76,10 +87,46 @@ export const getDB = () => {
         if (oldVersion < 2) {
           db.createObjectStore('barcodeCache', { keyPath: 'barcode' });
         }
+        if (oldVersion < 3) {
+          db.createObjectStore('logs', { keyPath: 'id', autoIncrement: true });
+        }
       },
     });
   }
   return dbPromise;
+};
+
+export const addLog = async (event: string, type: 'info' | 'success' | 'error' = 'info', details?: string) => {
+  const db = await getDB();
+  const log = {
+    timestamp: Date.now(),
+    event,
+    details,
+    type
+  };
+  // @ts-ignore - id is auto-incremented
+  await db.add('logs', log);
+
+  // Limit log size to 200
+  const allLogs = await db.getAll('logs');
+  if (allLogs.length > 200) {
+    const toDelete = allLogs.slice(0, allLogs.length - 200);
+    const tx = db.transaction('logs', 'readwrite');
+    for (const l of toDelete) {
+      await tx.store.delete(l.id);
+    }
+    await tx.done;
+  }
+};
+
+export const getLogs = async () => {
+  const db = await getDB();
+  return db.getAll('logs');
+};
+
+export const clearLogs = async () => {
+  const db = await getDB();
+  await db.clear('logs');
 };
 
 export const getCachedBarcode = async (barcode: string) => {
@@ -99,7 +146,8 @@ export const getSettings = async (): Promise<AppSettings> => {
   const enableAmazonLinks = (await db.get('settings', 'enableAmazonLinks')) ?? true;
   const enableImdbData = (await db.get('settings', 'enableImdbData')) ?? true;
   const showBottomNav = (await db.get('settings', 'showBottomNav')) ?? true;
-  return { theme, displayMode, enableAmazonLinks, enableImdbData, showBottomNav };
+  const debugMode = (await db.get('settings', 'debugMode')) ?? false;
+  return { theme, displayMode, enableAmazonLinks, enableImdbData, showBottomNav, debugMode };
 };
 
 export const updateSetting = async (key: keyof AppSettings, value: any) => {

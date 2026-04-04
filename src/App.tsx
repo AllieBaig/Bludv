@@ -29,10 +29,14 @@ import {
   Link as LinkIcon,
   Image as ImageIcon,
   AlertCircle,
-  CheckCircle2
+  CheckCircle2,
+  Terminal,
+  FileText,
+  Trash,
+  Share
 } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
-import { getDB, MediaItem, compressImage, calculateLevel, getSettings, updateSetting, ThemeType, DisplayMode, AppSettings, getCachedBarcode, cacheBarcode } from './lib/db';
+import { getDB, MediaItem, compressImage, calculateLevel, getSettings, updateSetting, ThemeType, DisplayMode, AppSettings, getCachedBarcode, cacheBarcode, addLog, getLogs, clearLogs } from './lib/db';
 import { cn } from './lib/utils';
 import { fetchMediaInfo, fetchByBarcode, fetchByLink, getAmazonUkLink, urlToBase64 } from './lib/gemini';
 
@@ -184,6 +188,21 @@ export default function App() {
   const [manualBarcode, setManualBarcode] = useState('');
   const [importLink, setImportLink] = useState('');
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error' | 'info', text: string } | null>(null);
+  const [showLogs, setShowLogs] = useState(false);
+  const [liveLogs, setLiveLogs] = useState<any[]>([]);
+
+  const logEvent = async (event: string, type: 'info' | 'success' | 'error' = 'info', details?: string) => {
+    if (!settings.debugMode) return;
+    await addLog(event, type, details);
+    const updatedLogs = await getLogs();
+    setLiveLogs(updatedLogs.slice(-5).reverse());
+  };
+
+  useEffect(() => {
+    if (settings.debugMode) {
+      getLogs().then(logs => setLiveLogs(logs.slice(-5).reverse()));
+    }
+  }, [settings.debugMode]);
 
   // Auto-processing for manual barcode
   useEffect(() => {
@@ -273,6 +292,7 @@ export default function App() {
       xp: formData.type === 'movie' ? 50 : 30 + (formData.seasons?.length || 0) * 20
     };
     await db.put('collection', newItem);
+    logEvent(isEditing ? 'Item Updated' : 'Item Added', 'success', newItem.title);
     
     // Cache the barcode if available
     if (newItem.barcode) {
@@ -301,8 +321,12 @@ export default function App() {
   const handleFetchInfo = async () => {
     if (!formData.title || isFetching) return;
     setIsFetching(true);
+    setStatusMessage({ type: 'info', text: 'Fetching metadata...' });
+    logEvent('Manual Fetch Triggered', 'info', formData.title);
+    
     const data = await fetchMediaInfo(formData.title, formData.type as any);
     if (data) {
+      logEvent('Manual Fetch Success', 'success', data.title);
       let base64Image = formData.image;
       if (data.imageUrl) {
         base64Image = await urlToBase64(data.imageUrl);
@@ -317,6 +341,10 @@ export default function App() {
         actors: [...new Set([...(prev.actors || []), ...data.actors])],
         image: base64Image || prev.image
       }));
+      setStatusMessage({ type: 'success', text: 'Metadata updated!' });
+    } else {
+      logEvent('Manual Fetch Failed', 'error', formData.title);
+      setStatusMessage({ type: 'error', text: 'No data found for this title.' });
     }
     setIsFetching(false);
   };
@@ -328,9 +356,11 @@ export default function App() {
     setIsAdding(true);
     setDataSource('online');
     setStatusMessage({ type: 'info', text: 'Analyzing link...' });
+    logEvent('Link Import Triggered', 'info', importLink);
     
     const data = await fetchByLink(importLink);
     if (data) {
+      logEvent('Link Import Success', 'success', data.title);
       let base64Image = undefined;
       if (data.imageUrl) {
         try {
@@ -356,6 +386,7 @@ export default function App() {
       setAddFlowStep('full-form');
       setStatusMessage({ type: 'success', text: 'Data imported successfully!' });
     } else {
+      logEvent('Link Import Failed', 'error', importLink);
       setStatusMessage({ type: 'error', text: 'Could not find data for this link.' });
       setAddFlowStep('menu');
     }
@@ -369,16 +400,19 @@ export default function App() {
     setIsFetching(true);
     setScanStatus('scanning');
     setStatusMessage({ type: 'info', text: 'Scanning image for barcode...' });
+    logEvent('Image Scan Triggered', 'info', file.name);
     
     try {
       const html5QrCode = new Html5Qrcode("reader-hidden");
       const barcode = await html5QrCode.scanFile(file, true);
       if (barcode) {
+        logEvent('Barcode Detected from Image', 'success', barcode);
         setScanStatus('success');
         setStatusMessage({ type: 'success', text: 'Barcode detected!' });
         await handleBarcodeLookup(barcode);
       }
     } catch (err) {
+      logEvent('Image Scan Failed', 'error', String(err));
       console.error("Barcode detection failed:", err);
       setScanError("No barcode detected in image.");
       setScanStatus('failed');
@@ -391,10 +425,12 @@ export default function App() {
   const handleBarcodeLookup = async (barcode: string) => {
     if (!barcode) return;
     setManualBarcode('');
+    logEvent('Barcode Lookup Triggered', 'info', barcode);
     
     // 1. Check local cache first
     const cached = await getCachedBarcode(barcode);
     if (cached) {
+      logEvent('Barcode Found Locally', 'success', barcode);
       setDataSource('local');
       setFormData({
         ...cached,
@@ -410,6 +446,7 @@ export default function App() {
 
     // 2. If not found in cache, check online
     if (!navigator.onLine) {
+      logEvent('Barcode Lookup Offline', 'info', barcode);
       setDataSource(null);
       setFormData(prev => ({ ...prev, title: `Barcode: ${barcode}`, barcode }));
       setIsAdding(true);
@@ -425,6 +462,7 @@ export default function App() {
     
     const data = await fetchByBarcode(barcode);
     if (data) {
+      logEvent('Barcode Online Success', 'success', data.title);
       let base64Image = undefined;
       if (data.imageUrl) {
         try {
@@ -465,6 +503,7 @@ export default function App() {
       setAddFlowStep('full-form');
       setStatusMessage({ type: 'success', text: 'Data found and cached!' });
     } else {
+      logEvent('Barcode Online Failed', 'error', barcode);
       setFormData(prev => ({ ...prev, title: `Barcode: ${barcode}`, barcode }));
       setAddFlowStep('full-form');
       setStatusMessage({ type: 'error', text: 'No online data found. Manual entry enabled.' });
@@ -473,6 +512,7 @@ export default function App() {
   };
 
   const handleScan = async (decodedText: string) => {
+    logEvent('Camera Scan Success', 'success', decodedText);
     setIsScanning(false);
     setScanStatus('scanning');
     handleBarcodeLookup(decodedText);
@@ -534,15 +574,31 @@ export default function App() {
   const handleExport = async () => {
     const db = await getDB();
     const allItems = await db.getAll('collection');
-    const dataStr = JSON.stringify(allItems);
-    const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
+    const dataStr = JSON.stringify(allItems, null, 2);
+    const blob = new Blob([dataStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
     const now = new Date();
     const timestamp = now.toISOString().replace(/[:.]/g, '-').slice(0, 19);
     const exportFileDefaultName = `cinevault_backup_${timestamp}.json`;
     const linkElement = document.createElement('a');
-    linkElement.setAttribute('href', dataUri);
+    linkElement.setAttribute('href', url);
     linkElement.setAttribute('download', exportFileDefaultName);
     linkElement.click();
+    logEvent('Backup Exported', 'success');
+  };
+
+  const handleExportLogs = async () => {
+    const logs = await getLogs();
+    const data = JSON.stringify(logs, null, 2);
+    const blob = new Blob([data], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const now = new Date();
+    const dateStr = now.toISOString().replace(/[:.]/g, '-');
+    a.download = `cinevault-logs-${dateStr}.json`;
+    a.click();
+    logEvent('Logs Exported', 'success');
   };
 
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -789,10 +845,38 @@ export default function App() {
                     <div className={cn("absolute top-1 w-3 h-3 bg-white rounded-full transition-all", settings.showBottomNav ? "right-1" : "left-1")} />
                   </div>
                 </button>
+
+                <button 
+                  onClick={() => handleSettingChange('debugMode', !settings.debugMode)}
+                  className={cn(
+                    "w-full flex items-center justify-between p-4 rounded-xl border transition-all",
+                    settings.theme === 'dark' ? "bg-zinc-900 border-zinc-800" : "glass-card border-black/10"
+                  )}
+                >
+                  <div className="flex items-center gap-3">
+                    <Terminal size={20} className={settings.debugMode ? "text-purple-500" : "text-zinc-500"} />
+                    <span className="font-medium">Debug Mode</span>
+                  </div>
+                  <div className={cn("w-10 h-5 rounded-full relative transition-colors", settings.debugMode ? "bg-orange-500" : "bg-zinc-700")}>
+                    <div className={cn("absolute top-1 w-3 h-3 bg-white rounded-full transition-all", settings.debugMode ? "right-1" : "left-1")} />
+                  </div>
+                </button>
               </div>
             </div>
             
             <div className="space-y-2">
+              {settings.debugMode && (
+                <button onClick={() => setShowLogs(true)} className={cn(
+                  "w-full flex items-center justify-between p-4 rounded-xl border active:scale-[0.98] transition-all",
+                  settings.theme === 'dark' ? "bg-zinc-900 border-zinc-800" : "glass-card border-black/10"
+                )}>
+                  <div className="flex items-center gap-3">
+                    <FileText size={20} className="text-purple-500" />
+                    <span className="font-medium">View System Logs</span>
+                  </div>
+                  <ChevronRight size={16} className="text-zinc-600" />
+                </button>
+              )}
               <button onClick={() => window.location.reload()} className={cn(
                 "w-full flex items-center justify-between p-4 rounded-xl border active:scale-[0.98] transition-all",
                 settings.theme === 'dark' ? "bg-zinc-900 border-zinc-800" : "glass-card border-black/10"
@@ -1386,6 +1470,75 @@ export default function App() {
       )}
     </AnimatePresence>
 
+      {/* Modals */}
+      <AnimatePresence>
+        {showLogs && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/90 backdrop-blur-xl z-[100] flex flex-col"
+          >
+            <div className="p-6 border-b border-zinc-800 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <Terminal className="text-purple-500" size={24} />
+                <h2 className="text-xl font-bold">System Logs</h2>
+              </div>
+              <button onClick={() => setShowLogs(false)} className="p-2 bg-zinc-800 rounded-full text-zinc-400">
+                <X size={20} />
+              </button>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto p-4 space-y-2 font-mono text-[10px]">
+              {liveLogs.length === 0 ? (
+                <div className="h-full flex items-center justify-center text-zinc-600">
+                  No logs recorded yet.
+                </div>
+              ) : (
+                [...liveLogs].map((log, i) => (
+                  <div key={i} className={cn(
+                    "p-3 rounded-lg border",
+                    log.type === 'error' ? "bg-red-500/10 border-red-500/20 text-red-400" :
+                    log.type === 'success' ? "bg-green-500/10 border-green-500/20 text-green-400" :
+                    "bg-zinc-900 border-zinc-800 text-zinc-400"
+                  )}>
+                    <div className="flex justify-between items-start mb-1">
+                      <span className="font-black uppercase tracking-widest opacity-60">
+                        {new Date(log.timestamp).toLocaleTimeString()}
+                      </span>
+                      <span className="px-1.5 py-0.5 rounded bg-black/40 uppercase font-black">
+                        {log.type}
+                      </span>
+                    </div>
+                    <p className="font-bold text-zinc-200">{log.event}</p>
+                    {log.details && <p className="mt-1 opacity-60 break-all">{log.details}</p>}
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="p-6 border-t border-zinc-800 grid grid-cols-2 gap-4">
+              <button 
+                onClick={async () => {
+                  await clearLogs();
+                  setLiveLogs([]);
+                  logEvent('Logs Cleared', 'info');
+                }}
+                className="flex items-center justify-center gap-2 bg-zinc-800 text-zinc-400 py-4 rounded-2xl font-bold uppercase tracking-widest text-[10px] btn-tactile"
+              >
+                <Trash size={16} /> Clear Logs
+              </button>
+              <button 
+                onClick={handleExportLogs}
+                className="flex items-center justify-center gap-2 bg-purple-600 text-white py-4 rounded-2xl font-bold uppercase tracking-widest text-[10px] btn-tactile shadow-lg shadow-purple-600/20"
+              >
+                <Share size={16} /> Export Logs
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Detail Modal */}
       <AnimatePresence>
         {selectedItem && (
@@ -1539,6 +1692,34 @@ export default function App() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Debug Panel */}
+      {settings.debugMode && liveLogs.length > 0 && (
+        <div className="fixed top-4 left-4 right-4 z-[60] pointer-events-none">
+          <motion.div 
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="max-w-xs bg-black/80 backdrop-blur-md border border-purple-500/30 rounded-xl p-2 shadow-2xl"
+          >
+            <div className="flex items-center gap-2 mb-1 px-1">
+              <Terminal size={10} className="text-purple-500" />
+              <span className="text-[8px] font-black uppercase tracking-widest text-purple-500/80">Live Debug</span>
+            </div>
+            <div className="space-y-1">
+              {liveLogs.slice(0, 3).map((log, i) => (
+                <div key={i} className="flex items-center gap-2 text-[9px] font-mono truncate">
+                  <span className="opacity-30 shrink-0">{new Date(log.timestamp).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
+                  <span className={cn(
+                    "shrink-0 w-1 h-1 rounded-full",
+                    log.type === 'error' ? "bg-red-500" : log.type === 'success' ? "bg-green-500" : "bg-blue-500"
+                  )} />
+                  <span className="truncate text-zinc-400">{log.event}</span>
+                </div>
+              ))}
+            </div>
+          </motion.div>
+        </div>
+      )}
 
       {settings.showBottomNav && (
         <BottomNav 
