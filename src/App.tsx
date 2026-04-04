@@ -185,6 +185,10 @@ export default function App() {
   const [isScanning, setIsScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
   const [scanStatus, setScanStatus] = useState<'scanning' | 'success' | 'failed'>('scanning');
+  const [isProcessingImage, setIsProcessingImage] = useState(false);
+  const [processingPreview, setProcessingPreview] = useState<string | null>(null);
+  const [detectedBox, setDetectedBox] = useState<{x: number, y: number, w: number, h: number} | null>(null);
+  const [isZoomed, setIsZoomed] = useState(false);
   const [addFlowStep, setAddFlowStep] = useState<'menu' | 'scan' | 'manual-barcode' | 'quick-add' | 'full-form' | 'link-import' | null>(null);
   const [manualBarcode, setManualBarcode] = useState('');
   const [importLink, setImportLink] = useState('');
@@ -399,30 +403,142 @@ export default function App() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    setIsFetching(true);
+    setIsProcessingImage(true);
     setScanStatus('scanning');
-    setStatusMessage({ type: 'info', text: 'Scanning image for barcode...' });
+    setScanError(null);
+    setDetectedBox(null);
+    setIsZoomed(false);
+    setStatusMessage({ type: 'info', text: 'Auto-detecting barcode...' });
     logEvent('Image Scan Triggered', 'info', file.name);
+
+    // 1. Read file and show preview
+    const reader = new FileReader();
+    const imageDataUrl = await new Promise<string>((resolve) => {
+      reader.onload = (e) => resolve(e.target?.result as string);
+      reader.readAsDataURL(file);
+    });
+    setProcessingPreview(imageDataUrl);
+
+    // 2. Load image to detect region
+    const img = new Image();
+    img.src = imageDataUrl;
+    await new Promise((resolve) => img.onload = resolve);
+
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d')!;
+    canvas.width = img.width;
+    canvas.height = img.height;
+    ctx.drawImage(img, 0, 0);
+
+    // 3. Simple detection heuristic
+    await new Promise(r => setTimeout(r, 800)); // Animation delay
+    const box = detectBarcodeRegion(ctx, canvas.width, canvas.height);
     
+    if (box) {
+      setDetectedBox(box);
+      logEvent('Barcode Region Detected', 'info');
+      await new Promise(r => setTimeout(r, 600));
+      setIsZoomed(true);
+      await new Promise(r => setTimeout(r, 600));
+    } else {
+      // Fallback to center
+      const fallbackBox = {
+        x: canvas.width * 0.1,
+        y: canvas.height * 0.3,
+        w: canvas.width * 0.8,
+        h: canvas.height * 0.4
+      };
+      setDetectedBox(fallbackBox);
+      logEvent('Detection Failed - Using Center Fallback', 'info');
+      await new Promise(r => setTimeout(r, 800));
+      setIsZoomed(true);
+      await new Promise(r => setTimeout(r, 600));
+    }
+
+    // 4. Crop and Enhance
+    const cropCanvas = document.createElement('canvas');
+    const targetBox = detectedBox || { x: 0, y: 0, w: canvas.width, h: canvas.height };
+    cropCanvas.width = targetBox.w;
+    cropCanvas.height = targetBox.h;
+    const cropCtx = cropCanvas.getContext('2d')!;
+    
+    // Apply enhancements during draw
+    cropCtx.filter = 'contrast(1.4) brightness(1.1) saturate(0)'; // Grayscale + contrast helps
+    cropCtx.drawImage(canvas, targetBox.x, targetBox.y, targetBox.w, targetBox.h, 0, 0, targetBox.w, targetBox.h);
+    
+    // 5. Scan the processed image
     try {
+      const blob = await new Promise<Blob | null>(resolve => cropCanvas.toBlob(resolve, 'image/png'));
+      if (!blob) throw new Error("Canvas to Blob failed");
+      const processedFile = new File([blob], "processed.png", { type: "image/png" });
+
       const html5QrCode = new Html5Qrcode("reader-hidden");
-      // Try scanning with different formats if possible, but scanFile is limited
-      const barcode = await html5QrCode.scanFile(file, true);
+      const barcode = await html5QrCode.scanFile(processedFile, true);
+      
       if (barcode) {
         logEvent('Barcode Detected from Image', 'success', barcode);
         setScanStatus('success');
         setStatusMessage({ type: 'success', text: 'Barcode detected!' });
+        await new Promise(r => setTimeout(r, 500));
+        setIsProcessingImage(false);
         await handleBarcodeLookup(barcode);
       }
     } catch (err) {
       logEvent('Image Scan Failed', 'error', String(err));
       console.error("Barcode detection failed:", err);
-      setScanError("Barcode not detected. Ensure it's centered and well-lit.");
+      setScanError("Barcode not detected. Try manual entry or a clearer photo.");
       setScanStatus('failed');
-      setStatusMessage({ type: 'error', text: 'Barcode not detected. Try manual entry.' });
-    } finally {
-      setIsFetching(false);
+      setStatusMessage({ type: 'error', text: 'Detection failed. Try manual entry.' });
+      await new Promise(r => setTimeout(r, 2000));
+      setIsProcessingImage(false);
     }
+  };
+
+  const detectBarcodeRegion = (ctx: CanvasRenderingContext2D, width: number, height: number) => {
+    const imageData = ctx.getImageData(0, 0, width, height);
+    const data = imageData.data;
+    const gridSize = 30;
+    const cols = Math.floor(width / gridSize);
+    const rows = Math.floor(height / gridSize);
+    const grid = Array(rows).fill(0).map(() => Array(cols).fill(0));
+
+    for (let y = 0; y < height; y += 4) {
+      for (let x = 1; x < width; x += 4) {
+        const idx = (y * width + x) * 4;
+        const prevIdx = (y * width + x - 1) * 4;
+        const b = (data[idx] + data[idx+1] + data[idx+2]) / 3;
+        const pb = (data[prevIdx] + data[prevIdx+1] + data[prevIdx+2]) / 3;
+        if (Math.abs(b - pb) > 35) {
+          const r = Math.floor(y / gridSize);
+          const c = Math.floor(x / gridSize);
+          if (r < rows && c < cols) grid[r][c]++;
+        }
+      }
+    }
+
+    let maxDensity = 0;
+    let bestR = 0, bestC = 0;
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (grid[r][c] > maxDensity) {
+          maxDensity = grid[r][c];
+          bestR = r;
+          bestC = c;
+        }
+      }
+    }
+
+    if (maxDensity < 15) return null;
+
+    const boxW = Math.min(width * 0.9, gridSize * 12);
+    const boxH = Math.min(height * 0.5, gridSize * 8);
+    
+    return {
+      x: Math.max(0, (bestC * gridSize - boxW / 2 + gridSize / 2) / width * 100),
+      y: Math.max(0, (bestR * gridSize - boxH / 2 + gridSize / 2) / height * 100),
+      w: (boxW / width) * 100,
+      h: (boxH / height) * 100
+    };
   };
 
   const handleBarcodeLookup = async (barcode: string) => {
@@ -1490,6 +1606,82 @@ export default function App() {
     </AnimatePresence>
 
       {/* Modals */}
+      <AnimatePresence>
+        {isProcessingImage && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/95 backdrop-blur-2xl z-[150] flex flex-col items-center justify-center p-6"
+          >
+            <div className="relative w-full max-w-sm aspect-square rounded-3xl overflow-hidden border border-white/10 soft-shadow bg-zinc-900">
+              {processingPreview && (
+                <div className="w-full h-full relative overflow-hidden">
+                  <motion.img
+                    src={processingPreview}
+                    animate={isZoomed && detectedBox ? {
+                      scale: 100 / Math.max(detectedBox.w, detectedBox.h) * 0.8,
+                      x: `${50 - (detectedBox.x + detectedBox.w/2)}%`,
+                      y: `${50 - (detectedBox.y + detectedBox.h/2)}%`
+                    } : { scale: 1, x: 0, y: 0 }}
+                    transition={{ duration: 0.8, ease: "easeInOut" }}
+                    className="w-full h-full object-contain opacity-40"
+                  />
+                </div>
+              )}
+              
+              {/* Scanning Line */}
+              <motion.div 
+                animate={{ top: ['0%', '100%', '0%'] }}
+                transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+                className="absolute left-0 right-0 h-1 bg-orange-500 shadow-[0_0_15px_rgba(249,115,22,0.8)] z-20"
+              />
+
+              {/* Bounding Box */}
+              <AnimatePresence>
+                {detectedBox && !isZoomed && (
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.8 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0 }}
+                    style={{
+                      left: `${detectedBox.x}%`,
+                      top: `${detectedBox.y}%`,
+                      width: `${detectedBox.w}%`,
+                      height: `${detectedBox.h}%`,
+                    }}
+                    className="absolute border-2 border-green-500 shadow-[0_0_10px_rgba(34,197,94,0.5)] z-30 rounded-lg"
+                  >
+                    <div className="absolute -top-6 left-0 bg-green-500 text-white text-[8px] font-black px-2 py-0.5 rounded uppercase tracking-widest whitespace-nowrap">
+                      Barcode Region Detected
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+
+            <div className="mt-12 text-center space-y-4">
+              <div className="flex items-center justify-center gap-3">
+                <RefreshCw size={20} className="text-orange-500 animate-spin" />
+                <h2 className="text-xl font-black uppercase italic tracking-widest text-white">
+                  {isZoomed ? "Enhancing & Scanning..." : "Auto-detecting Barcode..."}
+                </h2>
+              </div>
+              <p className="text-zinc-500 text-[10px] font-bold uppercase tracking-[0.2em] max-w-[200px] mx-auto leading-relaxed">
+                {isZoomed ? "Optimizing contrast for accurate recognition" : "Analyzing image edges and patterns"}
+              </p>
+            </div>
+
+            <button 
+              onClick={() => setIsProcessingImage(false)}
+              className="absolute bottom-12 p-4 bg-zinc-800 rounded-full text-zinc-400 btn-tactile"
+            >
+              <X size={24} />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <AnimatePresence>
         {showLogs && (
           <motion.div 
