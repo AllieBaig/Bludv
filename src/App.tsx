@@ -360,7 +360,9 @@ export default function App() {
     
     const data = await fetchByLink(importLink);
     if (data) {
-      logEvent('Link Import Success', 'success', data.title);
+      const isFallback = data.description?.includes('fetch failed');
+      logEvent(isFallback ? 'Link Import Fallback' : 'Link Import Success', isFallback ? 'info' : 'success', data.title);
+      
       let base64Image = undefined;
       if (data.imageUrl) {
         try {
@@ -384,11 +386,10 @@ export default function App() {
       });
       setImportLink('');
       setAddFlowStep('full-form');
-      setStatusMessage({ type: 'success', text: 'Data imported successfully!' });
-    } else {
-      logEvent('Link Import Failed', 'error', importLink);
-      setStatusMessage({ type: 'error', text: 'Could not find data for this link.' });
-      setAddFlowStep('menu');
+      setStatusMessage({ 
+        type: isFallback ? 'info' : 'success', 
+        text: isFallback ? 'Link parsed. Please check details.' : 'Data imported successfully!' 
+      });
     }
     setIsFetching(false);
   };
@@ -404,6 +405,7 @@ export default function App() {
     
     try {
       const html5QrCode = new Html5Qrcode("reader-hidden");
+      // Try scanning with different formats if possible, but scanFile is limited
       const barcode = await html5QrCode.scanFile(file, true);
       if (barcode) {
         logEvent('Barcode Detected from Image', 'success', barcode);
@@ -414,9 +416,9 @@ export default function App() {
     } catch (err) {
       logEvent('Image Scan Failed', 'error', String(err));
       console.error("Barcode detection failed:", err);
-      setScanError("No barcode detected in image.");
+      setScanError("Barcode not detected. Ensure it's centered and well-lit.");
       setScanStatus('failed');
-      setStatusMessage({ type: 'error', text: 'No barcode found in this image.' });
+      setStatusMessage({ type: 'error', text: 'Barcode not detected. Try manual entry.' });
     } finally {
       setIsFetching(false);
     }
@@ -462,7 +464,9 @@ export default function App() {
     
     const data = await fetchByBarcode(barcode);
     if (data) {
-      logEvent('Barcode Online Success', 'success', data.title);
+      const isFallback = data.description?.includes('could not be fetched');
+      logEvent(isFallback ? 'Barcode Online Fallback' : 'Barcode Online Success', isFallback ? 'info' : 'success', data.title);
+      
       let base64Image = undefined;
       if (data.imageUrl) {
         try {
@@ -487,26 +491,27 @@ export default function App() {
       };
       setFormData(resultData);
       
-      // Cache the result
-      await cacheBarcode({
-        barcode: barcode,
-        title: data.title,
-        year: data.year,
-        format: data.format || 'bluray',
-        image: base64Image,
-        type: data.type || 'movie',
-        genre: data.genre,
-        rating: data.rating,
-        description: data.description,
-        actors: data.actors
+      // Cache the result if it's not a fallback
+      if (!isFallback) {
+        await cacheBarcode({
+          barcode: barcode,
+          title: data.title,
+          year: data.year,
+          format: data.format || 'bluray',
+          image: base64Image,
+          type: data.type || 'movie',
+          genre: data.genre,
+          rating: data.rating,
+          description: data.description,
+          actors: data.actors,
+        });
+      }
+
+      setAddFlowStep('full-form');
+      setStatusMessage({ 
+        type: isFallback ? 'info' : 'success', 
+        text: isFallback ? 'No online data found. Manual entry enabled.' : 'Data found and cached!' 
       });
-      setAddFlowStep('full-form');
-      setStatusMessage({ type: 'success', text: 'Data found and cached!' });
-    } else {
-      logEvent('Barcode Online Failed', 'error', barcode);
-      setFormData(prev => ({ ...prev, title: `Barcode: ${barcode}`, barcode }));
-      setAddFlowStep('full-form');
-      setStatusMessage({ type: 'error', text: 'No online data found. Manual entry enabled.' });
     }
     setIsFetching(false);
   };

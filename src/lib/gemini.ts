@@ -87,14 +87,38 @@ export const fetchByBarcode = async (barcode: string): Promise<ImdbData | null> 
     if (response.text) {
       return JSON.parse(cleanJson(response.text)) as ImdbData;
     }
-    return null;
   } catch (error) {
     console.error("Error fetching media info by barcode:", error);
-    return null;
   }
+  
+  // Fallback: Create a placeholder title if fetch fails
+  return {
+    title: `Barcode: ${barcode}`,
+    year: "",
+    genre: "",
+    rating: "",
+    imageUrl: "",
+    actors: [],
+    description: "Data could not be fetched automatically. Please enter details manually.",
+    format: 'bluray',
+    type: 'movie'
+  };
 };
 
 export const fetchByLink = async (link: string): Promise<ImdbData | null> => {
+  // Pre-parse for fallback data
+  let fallbackTitle = "Imported Item";
+  if (link.includes('amazon.co.uk')) {
+    const match = link.match(/\/dp\/([A-Z0-9]+)/) || link.match(/\/gp\/product\/([A-Z0-9]+)/);
+    if (match) fallbackTitle = `Amazon Item (${match[1]})`;
+    // Try to extract title from slug
+    const slugMatch = link.match(/\.co\.uk\/([^/]+)\/dp\//);
+    if (slugMatch) fallbackTitle = slugMatch[1].replace(/-/g, ' ');
+  } else if (link.includes('imdb.com')) {
+    const match = link.match(/\/title\/(tt\d+)/);
+    if (match) fallbackTitle = `IMDb: ${match[1]}`;
+  }
+
   try {
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
@@ -126,11 +150,22 @@ export const fetchByLink = async (link: string): Promise<ImdbData | null> => {
     if (response.text) {
       return JSON.parse(cleanJson(response.text)) as ImdbData;
     }
-    return null;
   } catch (error) {
     console.error("Error fetching media info by link:", error);
-    return null;
   }
+
+  // Fallback if Gemini fails
+  return {
+    title: fallbackTitle,
+    year: "",
+    genre: "",
+    rating: "",
+    imageUrl: "",
+    actors: [],
+    description: "Link parsed but online data fetch failed. Please check details.",
+    format: 'bluray',
+    type: 'movie'
+  };
 };
 
 export const getAmazonUkLink = (title: string, format: string): string => {
