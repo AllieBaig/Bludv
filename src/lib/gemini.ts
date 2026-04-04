@@ -90,6 +90,45 @@ export const fetchByBarcode = async (barcode: string): Promise<ImdbData | null> 
   }
 };
 
+export const fetchByLink = async (link: string): Promise<ImdbData | null> => {
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: `Identify the movie or TV show associated with the link "${link}". Provide the official title, release year, main genre, IMDb rating, a high-quality poster image URL, a short description, the media format (dvd, bluray, or 4k), and the type (movie or tv). Also list the main actors.`,
+      config: {
+        tools: [{ googleSearch: {} }],
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            title: { type: Type.STRING },
+            year: { type: Type.STRING },
+            genre: { type: Type.STRING },
+            rating: { type: Type.STRING },
+            imageUrl: { type: Type.STRING },
+            description: { type: Type.STRING },
+            format: { type: Type.STRING, enum: ['dvd', 'bluray', '4k'] },
+            type: { type: Type.STRING, enum: ['movie', 'tv'] },
+            actors: { 
+              type: Type.ARRAY,
+              items: { type: Type.STRING }
+            }
+          },
+          required: ["title", "year", "genre", "rating", "imageUrl", "actors", "description", "format", "type"]
+        }
+      }
+    });
+
+    if (response.text) {
+      return JSON.parse(response.text) as ImdbData;
+    }
+    return null;
+  } catch (error) {
+    console.error("Error fetching media info by link:", error);
+    return null;
+  }
+};
+
 export const getAmazonUkLink = (title: string, format: string): string => {
   const query = encodeURIComponent(`${title} ${format} amazon uk`);
   return `https://www.amazon.co.uk/s?k=${query}`;

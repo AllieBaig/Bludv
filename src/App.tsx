@@ -25,12 +25,14 @@ import {
   Calendar,
   Tag as TagIcon,
   Globe,
-  Barcode
+  Barcode,
+  Link as LinkIcon,
+  Image as ImageIcon
 } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
 import { getDB, MediaItem, compressImage, calculateLevel, getSettings, updateSetting, ThemeType, DisplayMode, AppSettings, getCachedBarcode, cacheBarcode } from './lib/db';
 import { cn } from './lib/utils';
-import { fetchMediaInfo, fetchByBarcode, getAmazonUkLink, urlToBase64 } from './lib/gemini';
+import { fetchMediaInfo, fetchByBarcode, fetchByLink, getAmazonUkLink, urlToBase64 } from './lib/gemini';
 
 // --- Components ---
 
@@ -176,8 +178,9 @@ export default function App() {
   const [isScanning, setIsScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
   const [scanStatus, setScanStatus] = useState<'scanning' | 'success' | 'failed'>('scanning');
-  const [addFlowStep, setAddFlowStep] = useState<'menu' | 'scan' | 'manual-barcode' | 'quick-add' | 'full-form' | null>(null);
+  const [addFlowStep, setAddFlowStep] = useState<'menu' | 'scan' | 'manual-barcode' | 'quick-add' | 'full-form' | 'link-import' | null>(null);
   const [manualBarcode, setManualBarcode] = useState('');
+  const [importLink, setImportLink] = useState('');
 
   // Form State
   const [formData, setFormData] = useState<Partial<MediaItem>>({
@@ -281,6 +284,63 @@ export default function App() {
       }));
     }
     setIsFetching(false);
+  };
+
+  const handleLinkImport = async () => {
+    if (!importLink || isFetching) return;
+    
+    setAddFlowStep('full-form');
+    setDataSource('online');
+    setIsFetching(true);
+    setIsAdding(true);
+    
+    const data = await fetchByLink(importLink);
+    if (data) {
+      let base64Image = undefined;
+      if (data.imageUrl) {
+        base64Image = await urlToBase64(data.imageUrl);
+      }
+      setFormData({
+        title: data.title,
+        type: data.type || 'movie',
+        format: data.format || 'bluray',
+        year: data.year,
+        genre: data.genre,
+        rating: data.rating,
+        description: data.description,
+        actors: data.actors,
+        image: base64Image,
+        tags: [],
+        seasons: []
+      });
+      setImportLink('');
+    } else {
+      setFormData(prev => ({ ...prev, title: "Import Failed" }));
+    }
+    setIsFetching(false);
+  };
+
+  const handleImageScan = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsFetching(true);
+    setScanStatus('scanning');
+    
+    try {
+      const html5QrCode = new Html5Qrcode("reader-hidden");
+      const barcode = await html5QrCode.scanFile(file, true);
+      if (barcode) {
+        setScanStatus('success');
+        handleBarcodeLookup(barcode);
+      }
+    } catch (err) {
+      console.error("Barcode detection failed:", err);
+      setScanError("No barcode detected in image.");
+      setScanStatus('failed');
+    } finally {
+      setIsFetching(false);
+    }
   };
 
   const handleBarcodeLookup = async (barcode: string) => {
@@ -728,6 +788,9 @@ export default function App() {
         )}
       </main>
 
+      {/* Hidden reader for file scanning */}
+      <div id="reader-hidden" className="hidden"></div>
+
       {/* Add / Edit Modal */}
       <AnimatePresence>
         {(isAdding || isEditing) && (
@@ -782,11 +845,64 @@ export default function App() {
                     </div>
                   </button>
                   <button 
+                    onClick={() => setAddFlowStep('link-import')}
+                    className="flex items-center gap-5 p-6 bg-zinc-900/40 border border-zinc-800/50 rounded-3xl btn-tactile text-left group soft-shadow"
+                  >
+                    <div className="p-4 bg-green-500 rounded-2xl text-white shadow-[0_10px_20px_rgba(34,197,94,0.3)]"><LinkIcon size={28} strokeWidth={2.5} /></div>
+                    <div>
+                      <p className="font-black uppercase tracking-tight text-lg italic">Import Link</p>
+                      <p className="text-[9px] text-zinc-500 uppercase font-black tracking-[0.15em] mt-1 opacity-60">Paste Amazon UK or IMDb link</p>
+                    </div>
+                  </button>
+                  <label 
+                    className="flex items-center gap-5 p-6 bg-zinc-900/40 border border-zinc-800/50 rounded-3xl btn-tactile text-left group soft-shadow cursor-pointer"
+                  >
+                    <div className="p-4 bg-pink-500 rounded-2xl text-white shadow-[0_10px_20px_rgba(236,72,153,0.3)]"><ImageIcon size={28} strokeWidth={2.5} /></div>
+                    <div>
+                      <p className="font-black uppercase tracking-tight text-lg italic">Scan Image</p>
+                      <p className="text-[9px] text-zinc-500 uppercase font-black tracking-[0.15em] mt-1 opacity-60">Detect barcode from photo library</p>
+                    </div>
+                    <input type="file" accept="image/*" className="hidden" onChange={handleImageScan} />
+                  </label>
+                  <button 
                     onClick={() => setAddFlowStep('full-form')}
                     className="mt-6 text-center text-[10px] font-black uppercase tracking-[0.2em] text-zinc-600 hover:text-orange-500 transition-colors btn-tactile py-2"
                   >
                     Skip to manual entry
                   </button>
+                </motion.div>
+              )}
+
+              {/* Link Import Input */}
+              {!isEditing && addFlowStep === 'link-import' && (
+                <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-6 pt-4">
+                  <div className="bg-zinc-900/40 border border-zinc-800/50 rounded-3xl p-8 space-y-6 soft-shadow">
+                    <div>
+                      <label className="text-[10px] font-black uppercase text-zinc-500 tracking-[0.2em] ml-1">Amazon UK or IMDb Link</label>
+                      <input 
+                        autoFocus
+                        type="text" 
+                        placeholder="Paste link here..." 
+                        className="w-full bg-zinc-950 border border-zinc-800/50 rounded-2xl p-5 text-sm focus:outline-none focus:border-green-500 mt-3 font-bold tracking-tight"
+                        value={importLink}
+                        onChange={(e) => setImportLink(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && handleLinkImport()}
+                      />
+                    </div>
+                    <button 
+                      onClick={handleLinkImport}
+                      disabled={!importLink || isFetching}
+                      className="w-full py-5 bg-green-500 text-white rounded-2xl font-black uppercase text-[10px] tracking-[0.2em] shadow-lg shadow-green-500/20 active:scale-[0.98] transition-all disabled:opacity-50 disabled:active:scale-100 btn-tactile"
+                    >
+                      {isFetching ? 'Synchronizing...' : 'Import Data'}
+                    </button>
+                    <button 
+                      onClick={() => setAddFlowStep('menu')}
+                      className="w-full py-4 text-[10px] font-black uppercase tracking-widest text-zinc-600 btn-tactile"
+                    >
+                      Back to Menu
+                    </button>
+                  </div>
                 </motion.div>
               )}
 
