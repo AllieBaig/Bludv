@@ -14,6 +14,10 @@ export interface ImdbData {
   type?: 'movie' | 'tv';
 }
 
+const cleanJson = (text: string) => {
+  return text.replace(/```json\n?|```/g, "").trim();
+};
+
 export const fetchMediaInfo = async (title: string, type: 'movie' | 'tv'): Promise<ImdbData | null> => {
   try {
     const response = await ai.models.generateContent({
@@ -42,7 +46,7 @@ export const fetchMediaInfo = async (title: string, type: 'movie' | 'tv'): Promi
     });
 
     if (response.text) {
-      return JSON.parse(response.text) as ImdbData;
+      return JSON.parse(cleanJson(response.text)) as ImdbData;
     }
     return null;
   } catch (error) {
@@ -81,7 +85,7 @@ export const fetchByBarcode = async (barcode: string): Promise<ImdbData | null> 
     });
 
     if (response.text) {
-      return JSON.parse(response.text) as ImdbData;
+      return JSON.parse(cleanJson(response.text)) as ImdbData;
     }
     return null;
   } catch (error) {
@@ -120,7 +124,7 @@ export const fetchByLink = async (link: string): Promise<ImdbData | null> => {
     });
 
     if (response.text) {
-      return JSON.parse(response.text) as ImdbData;
+      return JSON.parse(cleanJson(response.text)) as ImdbData;
     }
     return null;
   } catch (error) {

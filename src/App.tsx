@@ -27,7 +27,9 @@ import {
   Globe,
   Barcode,
   Link as LinkIcon,
-  Image as ImageIcon
+  Image as ImageIcon,
+  AlertCircle,
+  CheckCircle2
 } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
 import { getDB, MediaItem, compressImage, calculateLevel, getSettings, updateSetting, ThemeType, DisplayMode, AppSettings, getCachedBarcode, cacheBarcode } from './lib/db';
@@ -181,6 +183,7 @@ export default function App() {
   const [addFlowStep, setAddFlowStep] = useState<'menu' | 'scan' | 'manual-barcode' | 'quick-add' | 'full-form' | 'link-import' | null>(null);
   const [manualBarcode, setManualBarcode] = useState('');
   const [importLink, setImportLink] = useState('');
+  const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error' | 'info', text: string } | null>(null);
 
   // Form State
   const [formData, setFormData] = useState<Partial<MediaItem>>({
@@ -196,6 +199,13 @@ export default function App() {
     loadData();
     loadSettings();
   }, []);
+
+  useEffect(() => {
+    if (statusMessage) {
+      const timer = setTimeout(() => setStatusMessage(null), 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [statusMessage]);
 
   const loadSettings = async () => {
     const s = await getSettings();
@@ -289,16 +299,20 @@ export default function App() {
   const handleLinkImport = async () => {
     if (!importLink || isFetching) return;
     
-    setAddFlowStep('full-form');
-    setDataSource('online');
     setIsFetching(true);
     setIsAdding(true);
+    setDataSource('online');
+    setStatusMessage({ type: 'info', text: 'Analyzing link...' });
     
     const data = await fetchByLink(importLink);
     if (data) {
       let base64Image = undefined;
       if (data.imageUrl) {
-        base64Image = await urlToBase64(data.imageUrl);
+        try {
+          base64Image = await urlToBase64(data.imageUrl);
+        } catch (e) {
+          console.error("Image conversion failed", e);
+        }
       }
       setFormData({
         title: data.title,
@@ -314,8 +328,11 @@ export default function App() {
         seasons: []
       });
       setImportLink('');
+      setAddFlowStep('full-form');
+      setStatusMessage({ type: 'success', text: 'Data imported successfully!' });
     } else {
-      setFormData(prev => ({ ...prev, title: "Import Failed" }));
+      setStatusMessage({ type: 'error', text: 'Could not find data for this link.' });
+      setAddFlowStep('menu');
     }
     setIsFetching(false);
   };
@@ -326,18 +343,21 @@ export default function App() {
 
     setIsFetching(true);
     setScanStatus('scanning');
+    setStatusMessage({ type: 'info', text: 'Scanning image for barcode...' });
     
     try {
       const html5QrCode = new Html5Qrcode("reader-hidden");
       const barcode = await html5QrCode.scanFile(file, true);
       if (barcode) {
         setScanStatus('success');
-        handleBarcodeLookup(barcode);
+        setStatusMessage({ type: 'success', text: 'Barcode detected!' });
+        await handleBarcodeLookup(barcode);
       }
     } catch (err) {
       console.error("Barcode detection failed:", err);
       setScanError("No barcode detected in image.");
       setScanStatus('failed');
+      setStatusMessage({ type: 'error', text: 'No barcode found in this image.' });
     } finally {
       setIsFetching(false);
     }
@@ -346,7 +366,6 @@ export default function App() {
   const handleBarcodeLookup = async (barcode: string) => {
     if (!barcode) return;
     setManualBarcode('');
-    setAddFlowStep('full-form');
     
     // 1. Check local cache first
     const cached = await getCachedBarcode(barcode);
@@ -359,6 +378,8 @@ export default function App() {
         seasons: []
       });
       setIsAdding(true);
+      setAddFlowStep('full-form');
+      setStatusMessage({ type: 'success', text: 'Found in local cache!' });
       return;
     }
 
@@ -367,17 +388,25 @@ export default function App() {
       setDataSource(null);
       setFormData(prev => ({ ...prev, title: `Barcode: ${barcode}`, barcode }));
       setIsAdding(true);
+      setAddFlowStep('full-form');
+      setStatusMessage({ type: 'info', text: 'Offline: Manual entry required.' });
       return;
     }
 
     setDataSource('online');
     setIsFetching(true);
     setIsAdding(true);
+    setStatusMessage({ type: 'info', text: 'Searching online database...' });
+    
     const data = await fetchByBarcode(barcode);
     if (data) {
       let base64Image = undefined;
       if (data.imageUrl) {
-        base64Image = await urlToBase64(data.imageUrl);
+        try {
+          base64Image = await urlToBase64(data.imageUrl);
+        } catch (e) {
+          console.error("Image conversion failed", e);
+        }
       }
       const resultData = {
         title: data.title,
@@ -408,8 +437,12 @@ export default function App() {
         description: data.description,
         actors: data.actors
       });
+      setAddFlowStep('full-form');
+      setStatusMessage({ type: 'success', text: 'Data found and cached!' });
     } else {
       setFormData(prev => ({ ...prev, title: `Barcode: ${barcode}`, barcode }));
+      setAddFlowStep('full-form');
+      setStatusMessage({ type: 'error', text: 'No online data found. Manual entry enabled.' });
     }
     setIsFetching(false);
   };
@@ -1071,9 +1104,32 @@ export default function App() {
                   {isFetching && (
                     <div className="fixed inset-0 z-[110] bg-black/60 backdrop-blur-md flex flex-col items-center justify-center">
                       <div className="w-12 h-12 border-4 border-orange-500 border-t-transparent rounded-full animate-spin mb-6"></div>
-                      <p className="text-white font-black uppercase tracking-[0.2em] text-[10px]">Synchronizing...</p>
+                      <p className="text-white font-black uppercase tracking-[0.2em] text-[10px]">
+                        {statusMessage?.text || 'Synchronizing...'}
+                      </p>
                     </div>
                   )}
+
+                  <AnimatePresence>
+                    {statusMessage && !isFetching && (
+                      <motion.div 
+                        initial={{ opacity: 0, y: -20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -20 }}
+                        className={cn(
+                          "fixed top-24 left-1/2 -translate-x-1/2 z-[120] px-6 py-3 rounded-2xl shadow-2xl flex items-center gap-3 border backdrop-blur-xl",
+                          statusMessage.type === 'success' ? "bg-green-500/20 border-green-500/50 text-green-400" :
+                          statusMessage.type === 'error' ? "bg-red-500/20 border-red-500/50 text-red-400" :
+                          "bg-blue-500/20 border-blue-500/50 text-blue-400"
+                        )}
+                      >
+                        {statusMessage.type === 'success' ? <CheckCircle2 size={18} /> : 
+                         statusMessage.type === 'error' ? <AlertCircle size={18} /> : 
+                         <RefreshCw size={18} className="animate-spin" />}
+                        <span className="text-[10px] font-black uppercase tracking-widest">{statusMessage.text}</span>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
 
                   {/* Image Upload */}
                   <div className="relative">
