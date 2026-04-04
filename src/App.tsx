@@ -185,6 +185,31 @@ export default function App() {
   const [importLink, setImportLink] = useState('');
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error' | 'info', text: string } | null>(null);
 
+  // Auto-processing for manual barcode
+  useEffect(() => {
+    const barcode = manualBarcode.trim();
+    if ((barcode.length === 8 || barcode.length === 12 || barcode.length === 13) && !isFetching && addFlowStep === 'manual-barcode') {
+      const timer = setTimeout(() => {
+        handleBarcodeLookup(barcode);
+      }, 500); // Small debounce to ensure they finished typing if it's a fast typist
+      return () => clearTimeout(timer);
+    }
+  }, [manualBarcode, addFlowStep]);
+
+  // Auto-processing for link import
+  useEffect(() => {
+    const link = importLink.trim();
+    const isAmazon = link.includes('amazon.co.uk') || link.includes('amzn.to');
+    const isImdb = link.includes('imdb.com/title/');
+    
+    if ((isAmazon || isImdb) && !isFetching && addFlowStep === 'link-import') {
+      const timer = setTimeout(() => {
+        handleLinkImport();
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [importLink, addFlowStep]);
+
   // Form State
   const [formData, setFormData] = useState<Partial<MediaItem>>({
     type: 'movie',
@@ -920,6 +945,14 @@ export default function App() {
                         value={importLink}
                         onChange={(e) => setImportLink(e.target.value)}
                         onKeyDown={(e) => e.key === 'Enter' && handleLinkImport()}
+                        onPaste={(e) => {
+                          const pastedText = e.clipboardData.getData('text');
+                          if (pastedText.includes('amazon.co.uk') || pastedText.includes('amzn.to') || pastedText.includes('imdb.com/title/')) {
+                            setImportLink(pastedText);
+                            // The useEffect will pick this up, but we can also call it directly if we want it even faster
+                            // However, setImportLink is async-ish, so we'd need to pass the text to handleLinkImport
+                          }
+                        }}
                       />
                     </div>
                     <button 
@@ -953,6 +986,13 @@ export default function App() {
                         value={manualBarcode}
                         onChange={(e) => setManualBarcode(e.target.value)}
                         onKeyDown={(e) => e.key === 'Enter' && handleBarcodeLookup(manualBarcode)}
+                        onPaste={(e) => {
+                          const pastedText = e.clipboardData.getData('text').trim();
+                          if (pastedText.length >= 8) {
+                            setManualBarcode(pastedText);
+                            handleBarcodeLookup(pastedText);
+                          }
+                        }}
                       />
                     </div>
                     <button 
