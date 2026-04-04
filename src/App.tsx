@@ -189,6 +189,8 @@ export default function App() {
   const [processingPreview, setProcessingPreview] = useState<string | null>(null);
   const [detectedBox, setDetectedBox] = useState<{x: number, y: number, w: number, h: number} | null>(null);
   const [isZoomed, setIsZoomed] = useState(false);
+  const [isAdjustingCrop, setIsAdjustingCrop] = useState(false);
+  const [manualCropBox, setManualCropBox] = useState<{x: number, y: number, w: number, h: number}>({ x: 10, y: 30, w: 80, h: 40 });
   const [addFlowStep, setAddFlowStep] = useState<'menu' | 'scan' | 'manual-barcode' | 'quick-add' | 'full-form' | 'link-import' | null>(null);
   const [manualBarcode, setManualBarcode] = useState('');
   const [importLink, setImportLink] = useState('');
@@ -434,37 +436,57 @@ export default function App() {
     await new Promise(r => setTimeout(r, 800)); // Animation delay
     const box = detectBarcodeRegion(ctx, canvas.width, canvas.height);
     
+    const initialBox = box || {
+      x: 10,
+      y: 30,
+      w: 80,
+      h: 40
+    };
+    
+    setDetectedBox(initialBox);
+    setManualCropBox(initialBox);
+    setIsAdjustingCrop(true);
+    
     if (box) {
-      setDetectedBox(box);
       logEvent('Barcode Region Detected', 'info');
-      await new Promise(r => setTimeout(r, 600));
-      setIsZoomed(true);
-      await new Promise(r => setTimeout(r, 600));
     } else {
-      // Fallback to center
-      const fallbackBox = {
-        x: canvas.width * 0.1,
-        y: canvas.height * 0.3,
-        w: canvas.width * 0.8,
-        h: canvas.height * 0.4
-      };
-      setDetectedBox(fallbackBox);
       logEvent('Detection Failed - Using Center Fallback', 'info');
-      await new Promise(r => setTimeout(r, 800));
-      setIsZoomed(true);
-      await new Promise(r => setTimeout(r, 600));
     }
+  };
+
+  const executeScan = async (targetBox: {x: number, y: number, w: number, h: number}) => {
+    if (!processingPreview) return;
+    
+    setIsAdjustingCrop(false);
+    setIsZoomed(true);
+    setStatusMessage({ type: 'info', text: 'Enhancing & Scanning...' });
+    await new Promise(r => setTimeout(r, 600));
+
+    // Load original image to canvas for cropping
+    const img = new Image();
+    img.src = processingPreview;
+    await new Promise((resolve) => img.onload = resolve);
+
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d')!;
+    canvas.width = img.width;
+    canvas.height = img.height;
+    ctx.drawImage(img, 0, 0);
 
     // 4. Crop and Enhance
     const cropCanvas = document.createElement('canvas');
-    const targetBox = detectedBox || { x: 0, y: 0, w: canvas.width, h: canvas.height };
-    cropCanvas.width = targetBox.w;
-    cropCanvas.height = targetBox.h;
+    const pixelX = (targetBox.x / 100) * canvas.width;
+    const pixelY = (targetBox.y / 100) * canvas.height;
+    const pixelW = (targetBox.w / 100) * canvas.width;
+    const pixelH = (targetBox.h / 100) * canvas.height;
+
+    cropCanvas.width = pixelW;
+    cropCanvas.height = pixelH;
     const cropCtx = cropCanvas.getContext('2d')!;
     
     // Apply enhancements during draw
-    cropCtx.filter = 'contrast(1.4) brightness(1.1) saturate(0)'; // Grayscale + contrast helps
-    cropCtx.drawImage(canvas, targetBox.x, targetBox.y, targetBox.w, targetBox.h, 0, 0, targetBox.w, targetBox.h);
+    cropCtx.filter = 'contrast(1.5) brightness(1.1) saturate(0) sharpness(1.2)'; 
+    cropCtx.drawImage(canvas, pixelX, pixelY, pixelW, pixelH, 0, 0, pixelW, pixelH);
     
     // 5. Scan the processed image
     try {
@@ -485,12 +507,11 @@ export default function App() {
       }
     } catch (err) {
       logEvent('Image Scan Failed', 'error', String(err));
-      console.error("Barcode detection failed:", err);
-      setScanError("Barcode not detected. Try manual entry or a clearer photo.");
+      setScanError("Barcode not detected. Adjust crop and retry.");
       setScanStatus('failed');
-      setStatusMessage({ type: 'error', text: 'Detection failed. Try manual entry.' });
-      await new Promise(r => setTimeout(r, 2000));
-      setIsProcessingImage(false);
+      setStatusMessage({ type: 'error', text: 'Detection failed. Adjust crop.' });
+      setIsAdjustingCrop(true);
+      setIsZoomed(false);
     }
   };
 
@@ -1619,27 +1640,107 @@ export default function App() {
                 <div className="w-full h-full relative overflow-hidden">
                   <motion.img
                     src={processingPreview}
-                    animate={isZoomed && detectedBox ? {
-                      scale: 100 / Math.max(detectedBox.w, detectedBox.h) * 0.8,
-                      x: `${50 - (detectedBox.x + detectedBox.w/2)}%`,
-                      y: `${50 - (detectedBox.y + detectedBox.h/2)}%`
+                    animate={(isZoomed || isAdjustingCrop) && detectedBox ? {
+                      scale: isAdjustingCrop ? 1 : 100 / Math.max(detectedBox.w, detectedBox.h) * 0.8,
+                      x: isAdjustingCrop ? 0 : `${50 - (detectedBox.x + detectedBox.w/2)}%`,
+                      y: isAdjustingCrop ? 0 : `${50 - (detectedBox.y + detectedBox.h/2)}%`
                     } : { scale: 1, x: 0, y: 0 }}
                     transition={{ duration: 0.8, ease: "easeInOut" }}
-                    className="w-full h-full object-contain opacity-40"
+                    className={cn("w-full h-full object-contain", isAdjustingCrop ? "opacity-100" : "opacity-40")}
                   />
                 </div>
               )}
               
               {/* Scanning Line */}
-              <motion.div 
-                animate={{ top: ['0%', '100%', '0%'] }}
-                transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
-                className="absolute left-0 right-0 h-1 bg-orange-500 shadow-[0_0_15px_rgba(249,115,22,0.8)] z-20"
-              />
+              {!isAdjustingCrop && (
+                <motion.div 
+                  animate={{ top: ['0%', '100%', '0%'] }}
+                  transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+                  className="absolute left-0 right-0 h-1 bg-orange-500 shadow-[0_0_15px_rgba(249,115,22,0.8)] z-20"
+                />
+              )}
 
-              {/* Bounding Box */}
+              {/* Manual Crop Box */}
               <AnimatePresence>
-                {detectedBox && !isZoomed && (
+                {isAdjustingCrop && (
+                  <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="absolute inset-0 z-30 pointer-events-none"
+                  >
+                    {/* Dimmed background around crop area */}
+                    <div className="absolute inset-0 bg-black/60" style={{
+                      clipPath: `polygon(0% 0%, 0% 100%, ${manualCropBox.x}% 100%, ${manualCropBox.x}% ${manualCropBox.y}%, ${manualCropBox.x + manualCropBox.w}% ${manualCropBox.y}%, ${manualCropBox.x + manualCropBox.w}% ${manualCropBox.y + manualCropBox.h}%, ${manualCropBox.x}% ${manualCropBox.y + manualCropBox.h}%, ${manualCropBox.x}% 100%, 100% 100%, 100% 0%)`
+                    }} />
+
+                    <motion.div
+                      drag
+                      dragMomentum={false}
+                      onDrag={(e, info) => {
+                        const parent = (e.target as HTMLElement).parentElement?.getBoundingClientRect();
+                        if (!parent) return;
+                        const dx = (info.delta.x / parent.width) * 100;
+                        const dy = (info.delta.y / parent.height) * 100;
+                        setManualCropBox(prev => ({
+                          ...prev,
+                          x: Math.max(0, Math.min(100 - prev.w, prev.x + dx)),
+                          y: Math.max(0, Math.min(100 - prev.h, prev.y + dy))
+                        }));
+                      }}
+                      style={{
+                        left: `${manualCropBox.x}%`,
+                        top: `${manualCropBox.y}%`,
+                        width: `${manualCropBox.w}%`,
+                        height: `${manualCropBox.h}%`,
+                      }}
+                      className="absolute border-2 border-orange-500 shadow-[0_0_20px_rgba(249,115,22,0.5)] pointer-events-auto cursor-move"
+                    >
+                      {/* Resize Handles */}
+                      <div className="absolute -top-2 -left-2 w-4 h-4 bg-orange-500 rounded-full border-2 border-white" />
+                      <div className="absolute -top-2 -right-2 w-4 h-4 bg-orange-500 rounded-full border-2 border-white" />
+                      <div className="absolute -bottom-2 -left-2 w-4 h-4 bg-orange-500 rounded-full border-2 border-white" />
+                      <div 
+                        className="absolute -bottom-2 -right-2 w-6 h-6 bg-orange-500 rounded-full border-2 border-white cursor-nwse-resize flex items-center justify-center"
+                        onPointerDown={(e) => {
+                          e.stopPropagation();
+                          const startPos = { x: e.clientX, y: e.clientY };
+                          const startSize = { w: manualCropBox.w, h: manualCropBox.h };
+                          const parent = (e.currentTarget.parentElement?.parentElement as HTMLElement).getBoundingClientRect();
+                          
+                          const onPointerMove = (moveEvent: PointerEvent) => {
+                            const dx = ((moveEvent.clientX - startPos.x) / parent.width) * 100;
+                            const dy = ((moveEvent.clientY - startPos.y) / parent.height) * 100;
+                            setManualCropBox(prev => ({
+                              ...prev,
+                              w: Math.max(10, Math.min(100 - prev.x, startSize.w + dx)),
+                              h: Math.max(10, Math.min(100 - prev.y, startSize.h + dy))
+                            }));
+                          };
+                          
+                          const onPointerUp = () => {
+                            window.removeEventListener('pointermove', onPointerMove);
+                            window.removeEventListener('pointerup', onPointerUp);
+                          };
+                          
+                          window.addEventListener('pointermove', onPointerMove);
+                          window.addEventListener('pointerup', onPointerUp);
+                        }}
+                      >
+                        <Maximize2 size={10} className="text-white" />
+                      </div>
+
+                      <div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-orange-500 text-white text-[8px] font-black px-2 py-1 rounded uppercase tracking-widest whitespace-nowrap shadow-lg">
+                        Adjust Crop Area
+                      </div>
+                    </motion.div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {/* Bounding Box (Auto-detect result) */}
+              <AnimatePresence>
+                {detectedBox && !isZoomed && !isAdjustingCrop && (
                   <motion.div
                     initial={{ opacity: 0, scale: 0.8 }}
                     animate={{ opacity: 1, scale: 1 }}
@@ -1662,22 +1763,41 @@ export default function App() {
 
             <div className="mt-12 text-center space-y-4">
               <div className="flex items-center justify-center gap-3">
-                <RefreshCw size={20} className="text-orange-500 animate-spin" />
+                {isAdjustingCrop ? (
+                  <Edit2 size={20} className="text-orange-500" />
+                ) : (
+                  <RefreshCw size={20} className={cn("text-orange-500", !isAdjustingCrop && "animate-spin")} />
+                )}
                 <h2 className="text-xl font-black uppercase italic tracking-widest text-white">
-                  {isZoomed ? "Enhancing & Scanning..." : "Auto-detecting Barcode..."}
+                  {isAdjustingCrop ? "Manual Adjustment" : isZoomed ? "Enhancing & Scanning..." : "Auto-detecting Barcode..."}
                 </h2>
               </div>
               <p className="text-zinc-500 text-[10px] font-bold uppercase tracking-[0.2em] max-w-[200px] mx-auto leading-relaxed">
-                {isZoomed ? "Optimizing contrast for accurate recognition" : "Analyzing image edges and patterns"}
+                {isAdjustingCrop ? "Drag and resize the box to frame the barcode" : isZoomed ? "Optimizing contrast for accurate recognition" : "Analyzing image edges and patterns"}
               </p>
             </div>
 
-            <button 
-              onClick={() => setIsProcessingImage(false)}
-              className="absolute bottom-12 p-4 bg-zinc-800 rounded-full text-zinc-400 btn-tactile"
-            >
-              <X size={24} />
-            </button>
+            {isAdjustingCrop ? (
+              <div className="mt-12 flex gap-4 w-full max-w-xs">
+                <button 
+                  onClick={() => setIsProcessingImage(false)}
+                  className="flex-1 py-4 bg-zinc-900 border border-zinc-800 rounded-2xl font-black uppercase text-[10px] tracking-widest text-zinc-500 btn-tactile"
+                >Cancel</button>
+                <button 
+                  onClick={() => executeScan(manualCropBox)}
+                  className="flex-1 py-4 bg-orange-500 rounded-2xl font-black uppercase text-[10px] tracking-widest text-white shadow-lg shadow-orange-500/20 btn-tactile flex items-center justify-center gap-2"
+                >
+                  <Zap size={14} /> Scan
+                </button>
+              </div>
+            ) : (
+              <button 
+                onClick={() => setIsProcessingImage(false)}
+                className="absolute bottom-12 p-4 bg-zinc-800 rounded-full text-zinc-400 btn-tactile"
+              >
+                <X size={24} />
+              </button>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
