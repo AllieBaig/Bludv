@@ -108,15 +108,30 @@ export const fetchByBarcode = async (barcode: string): Promise<ImdbData | null> 
 export const fetchByLink = async (link: string): Promise<ImdbData | null> => {
   // Pre-parse for fallback data
   let fallbackTitle = "Imported Item";
-  if (link.includes('amazon.co.uk')) {
-    const match = link.match(/\/dp\/([A-Z0-9]+)/) || link.match(/\/gp\/product\/([A-Z0-9]+)/);
-    if (match) fallbackTitle = `Amazon Item (${match[1]})`;
-    // Try to extract title from slug
-    const slugMatch = link.match(/\.co\.uk\/([^/]+)\/dp\//);
-    if (slugMatch) fallbackTitle = slugMatch[1].replace(/-/g, ' ');
-  } else if (link.includes('imdb.com')) {
-    const match = link.match(/\/title\/(tt\d+)/);
-    if (match) fallbackTitle = `IMDb: ${match[1]}`;
+  let fallbackYear = "";
+  let fallbackFormat: 'bluray' | 'dvd' | '4k' = 'bluray';
+
+  try {
+    const url = new URL(link);
+    if (url.hostname.includes('amazon.co.uk')) {
+      // Try to extract title from slug: amazon.co.uk/TITLE-SLUG/dp/ASIN
+      const pathParts = url.pathname.split('/');
+      const dpIndex = pathParts.indexOf('dp');
+      if (dpIndex > 0) {
+        fallbackTitle = pathParts[dpIndex - 1]
+          .replace(/-/g, ' ')
+          .replace(/\b\w/g, l => l.toUpperCase());
+      }
+      
+      // Detect format from URL
+      if (link.toLowerCase().includes('4k')) fallbackFormat = '4k';
+      else if (link.toLowerCase().includes('dvd')) fallbackFormat = 'dvd';
+    } else if (url.hostname.includes('imdb.com')) {
+      const match = link.match(/\/title\/(tt\d+)/);
+      if (match) fallbackTitle = `IMDb: ${match[1]}`;
+    }
+  } catch (e) {
+    console.error("URL parsing failed for fallback", e);
   }
 
   try {
@@ -157,13 +172,13 @@ export const fetchByLink = async (link: string): Promise<ImdbData | null> => {
   // Fallback if Gemini fails
   return {
     title: fallbackTitle,
-    year: "",
+    year: fallbackYear,
     genre: "",
     rating: "",
     imageUrl: "",
     actors: [],
-    description: "Link parsed but online data fetch failed. Please check details.",
-    format: 'bluray',
+    description: "Link parsed but online data fetch failed. Partial data loaded.",
+    format: fallbackFormat,
     type: 'movie'
   };
 };

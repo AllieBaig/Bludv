@@ -33,7 +33,8 @@ import {
   Terminal,
   FileText,
   Trash,
-  Share
+  Share,
+  Copy
 } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
 import { getDB, MediaItem, compressImage, calculateLevel, getSettings, updateSetting, ThemeType, DisplayMode, AppSettings, getCachedBarcode, cacheBarcode, addLog, getLogs, clearLogs } from './lib/db';
@@ -388,7 +389,7 @@ export default function App() {
       setAddFlowStep('full-form');
       setStatusMessage({ 
         type: isFallback ? 'info' : 'success', 
-        text: isFallback ? 'Link parsed. Please check details.' : 'Data imported successfully!' 
+        text: isFallback ? 'Partial data loaded. Please check details.' : 'Data imported successfully!' 
       });
     }
     setIsFetching(false);
@@ -604,6 +605,19 @@ export default function App() {
     a.download = `cinevault-logs-${dateStr}.json`;
     a.click();
     logEvent('Logs Exported', 'success');
+  };
+
+  const handleCopyLogs = async () => {
+    const logs = await getLogs();
+    const text = logs.map(l => `[${new Date(l.timestamp).toISOString()}] ${l.type.toUpperCase()}: ${l.event}${l.details ? ` - ${l.details}` : ''}`).join('\n');
+    try {
+      await navigator.clipboard.writeText(text);
+      setStatusMessage({ type: 'success', text: 'Logs copied to clipboard!' });
+      logEvent('Logs Copied', 'success');
+    } catch (err) {
+      console.error('Failed to copy logs', err);
+      setStatusMessage({ type: 'error', text: 'Failed to copy logs' });
+    }
   };
 
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1522,22 +1536,28 @@ export default function App() {
               )}
             </div>
 
-            <div className="p-6 border-t border-zinc-800 grid grid-cols-2 gap-4">
+            <div className="p-6 border-t border-zinc-800 grid grid-cols-3 gap-3">
               <button 
                 onClick={async () => {
                   await clearLogs();
                   setLiveLogs([]);
                   logEvent('Logs Cleared', 'info');
                 }}
-                className="flex items-center justify-center gap-2 bg-zinc-800 text-zinc-400 py-4 rounded-2xl font-bold uppercase tracking-widest text-[10px] btn-tactile"
+                className="flex items-center justify-center gap-2 bg-zinc-800 text-zinc-400 py-4 rounded-2xl font-bold uppercase tracking-widest text-[9px] btn-tactile"
               >
-                <Trash size={16} /> Clear Logs
+                <Trash size={14} /> Clear
+              </button>
+              <button 
+                onClick={handleCopyLogs}
+                className="flex items-center justify-center gap-2 bg-zinc-800 text-zinc-400 py-4 rounded-2xl font-bold uppercase tracking-widest text-[9px] btn-tactile"
+              >
+                <Copy size={14} /> Copy
               </button>
               <button 
                 onClick={handleExportLogs}
-                className="flex items-center justify-center gap-2 bg-purple-600 text-white py-4 rounded-2xl font-bold uppercase tracking-widest text-[10px] btn-tactile shadow-lg shadow-purple-600/20"
+                className="flex items-center justify-center gap-2 bg-purple-600 text-white py-4 rounded-2xl font-bold uppercase tracking-widest text-[9px] btn-tactile shadow-lg shadow-purple-600/20"
               >
-                <Share size={16} /> Export Logs
+                <Share size={14} /> Export
               </button>
             </div>
           </motion.div>
