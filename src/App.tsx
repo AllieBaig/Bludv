@@ -37,7 +37,7 @@ import {
   Copy
 } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
-import { getDB, MediaItem, compressImage, calculateLevel, getSettings, updateSetting, ThemeType, DisplayMode, AppSettings, getCachedBarcode, cacheBarcode, addLog, getLogs, clearLogs } from './lib/db';
+import { getDB, MediaItem, compressImage, calculateLevel, getSettings, updateSetting, ThemeType, DisplayMode, AppSettings, getCachedBarcode, cacheBarcode, addLog, getLogs, clearLogs, saveBarcode, getSavedBarcodes, deleteSavedBarcode } from './lib/db';
 import { cn } from './lib/utils';
 import { fetchMediaInfo, fetchByBarcode, fetchByLink, getAmazonUkLink, urlToBase64 } from './lib/gemini';
 
@@ -197,6 +197,9 @@ export default function App() {
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error' | 'info', text: string } | null>(null);
   const [showLogs, setShowLogs] = useState(false);
   const [liveLogs, setLiveLogs] = useState<any[]>([]);
+  const [savedBarcodes, setSavedBarcodes] = useState<any[]>([]);
+  const [copySuccess, setCopySuccess] = useState(false);
+  const [logsTab, setLogsTab] = useState<'logs' | 'barcodes'>('logs');
 
   const logEvent = async (event: string, type: 'info' | 'success' | 'error' = 'info', details?: string) => {
     if (!settings.debugMode) return;
@@ -275,6 +278,16 @@ export default function App() {
     
     const totalXp = allItems.reduce((acc, item) => acc + item.xp, 0);
     setStats({ totalXp, count: allItems.length });
+
+    const barcodes = await getSavedBarcodes();
+    setSavedBarcodes(barcodes);
+  };
+
+  const handleDeleteBarcode = async (barcode: string) => {
+    await deleteSavedBarcode(barcode);
+    const updated = await getSavedBarcodes();
+    setSavedBarcodes(updated);
+    logEvent('Barcode Deleted from History', 'info', barcode);
   };
 
   const handleAddItem = async () => {
@@ -448,9 +461,11 @@ export default function App() {
     setIsAdjustingCrop(true);
     
     if (box) {
-      logEvent('Barcode Region Detected', 'info');
+      logEvent('Barcode Region Detected', 'success');
+      setStatusMessage({ type: 'success', text: 'Barcode detected!' });
     } else {
       logEvent('Detection Failed - Using Center Fallback', 'info');
+      setStatusMessage({ type: 'info', text: 'Adjust manually' });
     }
   };
 
@@ -565,8 +580,15 @@ export default function App() {
   const handleBarcodeLookup = async (barcode: string) => {
     if (!barcode) return;
     setManualBarcode('');
+    setIsFetching(true);
+    setStatusMessage({ type: 'info', text: 'Fetching media data...' });
     logEvent('Barcode Lookup Triggered', 'info', barcode);
     
+    // Save to history
+    await saveBarcode(barcode);
+    const updatedBarcodes = await getSavedBarcodes();
+    setSavedBarcodes(updatedBarcodes);
+
     // 1. Check local cache first
     const cached = await getCachedBarcode(barcode);
     if (cached) {
@@ -747,14 +769,22 @@ export default function App() {
   const handleCopyLogs = async () => {
     const logs = await getLogs();
     const text = logs.map(l => `[${new Date(l.timestamp).toISOString()}] ${l.type.toUpperCase()}: ${l.event}${l.details ? ` - ${l.details}` : ''}`).join('\n');
+    
+    const textArea = document.createElement("textarea");
+    textArea.value = text;
+    document.body.appendChild(textArea);
+    textArea.select();
     try {
-      await navigator.clipboard.writeText(text);
-      setStatusMessage({ type: 'success', text: 'Logs copied to clipboard!' });
+      document.execCommand('copy');
+      setCopySuccess(true);
+      setStatusMessage({ type: 'success', text: 'Logs copied!' });
+      setTimeout(() => setCopySuccess(false), 2000);
       logEvent('Logs Copied', 'success');
     } catch (err) {
-      console.error('Failed to copy logs', err);
-      setStatusMessage({ type: 'error', text: 'Failed to copy logs' });
+      console.error('Fallback copy failed', err);
+      setStatusMessage({ type: 'error', text: 'Failed to copy' });
     }
+    document.body.removeChild(textArea);
   };
 
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1811,9 +1841,27 @@ export default function App() {
             className="fixed inset-0 bg-black/90 backdrop-blur-xl z-[100] flex flex-col"
           >
             <div className="p-6 border-b border-zinc-800 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <Terminal className="text-purple-500" size={24} />
-                <h2 className="text-xl font-bold">System Logs</h2>
+              <div className="flex items-center gap-6">
+                <button 
+                  onClick={() => setLogsTab('logs')}
+                  className={cn(
+                    "flex items-center gap-3 transition-all",
+                    logsTab === 'logs' ? "text-purple-500 scale-105" : "text-zinc-500 opacity-50"
+                  )}
+                >
+                  <Terminal size={24} />
+                  <h2 className="text-xl font-bold">Logs</h2>
+                </button>
+                <button 
+                  onClick={() => setLogsTab('barcodes')}
+                  className={cn(
+                    "flex items-center gap-3 transition-all",
+                    logsTab === 'barcodes' ? "text-orange-500 scale-105" : "text-zinc-500 opacity-50"
+                  )}
+                >
+                  <Barcode size={24} />
+                  <h2 className="text-xl font-bold">History</h2>
+                </button>
               </div>
               <button onClick={() => setShowLogs(false)} className="p-2 bg-zinc-800 rounded-full text-zinc-400">
                 <X size={20} />
@@ -1821,39 +1869,85 @@ export default function App() {
             </div>
             
             <div className="flex-1 overflow-y-auto p-4 space-y-2 font-mono text-[10px]">
-              {liveLogs.length === 0 ? (
-                <div className="h-full flex items-center justify-center text-zinc-600">
-                  No logs recorded yet.
-                </div>
-              ) : (
-                [...liveLogs].map((log, i) => (
-                  <div key={i} className={cn(
-                    "p-3 rounded-lg border",
-                    log.type === 'error' ? "bg-red-500/10 border-red-500/20 text-red-400" :
-                    log.type === 'success' ? "bg-green-500/10 border-green-500/20 text-green-400" :
-                    "bg-zinc-900 border-zinc-800 text-zinc-400"
-                  )}>
-                    <div className="flex justify-between items-start mb-1">
-                      <span className="font-black uppercase tracking-widest opacity-60">
-                        {new Date(log.timestamp).toLocaleTimeString()}
-                      </span>
-                      <span className="px-1.5 py-0.5 rounded bg-black/40 uppercase font-black">
-                        {log.type}
-                      </span>
-                    </div>
-                    <p className="font-bold text-zinc-200">{log.event}</p>
-                    {log.details && <p className="mt-1 opacity-60 break-all">{log.details}</p>}
+              {logsTab === 'logs' ? (
+                liveLogs.length === 0 ? (
+                  <div className="h-full flex items-center justify-center text-zinc-600">
+                    No logs recorded yet.
                   </div>
-                ))
+                ) : (
+                  [...liveLogs].map((log, i) => (
+                    <div key={i} className={cn(
+                      "p-3 rounded-lg border",
+                      log.type === 'error' ? "bg-red-500/10 border-red-500/20 text-red-400" :
+                      log.type === 'success' ? "bg-green-500/10 border-green-500/20 text-green-400" :
+                      "bg-zinc-900 border-zinc-800 text-zinc-400"
+                    )}>
+                      <div className="flex justify-between items-start mb-1">
+                        <span className="font-black uppercase tracking-widest opacity-60">
+                          {new Date(log.timestamp).toLocaleTimeString()}
+                        </span>
+                        <span className="px-1.5 py-0.5 rounded bg-black/40 uppercase font-black">
+                          {log.type}
+                        </span>
+                      </div>
+                      <p className="font-bold text-zinc-200">{log.event}</p>
+                      {log.details && <p className="mt-1 opacity-60 break-all">{log.details}</p>}
+                    </div>
+                  ))
+                )
+              ) : (
+                savedBarcodes.length === 0 ? (
+                  <div className="h-full flex items-center justify-center text-zinc-600">
+                    No barcode history yet.
+                  </div>
+                ) : (
+                  savedBarcodes.map((b, i) => (
+                    <div key={i} className="flex items-center gap-3 bg-zinc-900 border border-zinc-800 p-4 rounded-2xl group">
+                      <div className="p-3 bg-orange-500/10 rounded-xl text-orange-500">
+                        <Barcode size={20} />
+                      </div>
+                      <div className="flex-1">
+                        <p className="text-sm font-bold text-zinc-200">{b.barcode}</p>
+                        <p className="text-[9px] font-black uppercase tracking-widest text-zinc-500 mt-1">
+                          {new Date(b.timestamp).toLocaleString()}
+                        </p>
+                      </div>
+                      <div className="flex gap-2">
+                        <button 
+                          onClick={() => {
+                            setShowLogs(false);
+                            handleBarcodeLookup(b.barcode);
+                          }}
+                          className="p-2 bg-zinc-800 text-zinc-400 rounded-lg hover:text-orange-500 transition-colors"
+                        >
+                          <Zap size={16} />
+                        </button>
+                        <button 
+                          onClick={() => handleDeleteBarcode(b.barcode)}
+                          className="p-2 bg-zinc-800 text-zinc-400 rounded-lg hover:text-red-500 transition-colors"
+                        >
+                          <Trash size={16} />
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )
               )}
             </div>
 
             <div className="p-6 border-t border-zinc-800 grid grid-cols-3 gap-3">
               <button 
                 onClick={async () => {
-                  await clearLogs();
-                  setLiveLogs([]);
-                  logEvent('Logs Cleared', 'info');
+                  if (logsTab === 'logs') {
+                    await clearLogs();
+                    setLiveLogs([]);
+                    logEvent('Logs Cleared', 'info');
+                  } else {
+                    const db = await getDB();
+                    await db.clear('savedBarcodes');
+                    setSavedBarcodes([]);
+                    logEvent('Barcode History Cleared', 'info');
+                  }
                 }}
                 className="flex items-center justify-center gap-2 bg-zinc-800 text-zinc-400 py-4 rounded-2xl font-bold uppercase tracking-widest text-[9px] btn-tactile"
               >
@@ -1861,9 +1955,13 @@ export default function App() {
               </button>
               <button 
                 onClick={handleCopyLogs}
-                className="flex items-center justify-center gap-2 bg-zinc-800 text-zinc-400 py-4 rounded-2xl font-bold uppercase tracking-widest text-[9px] btn-tactile"
+                className={cn(
+                  "flex items-center justify-center gap-2 py-4 rounded-2xl font-bold uppercase tracking-widest text-[9px] btn-tactile transition-all",
+                  copySuccess ? "bg-green-500 text-white" : "bg-zinc-800 text-zinc-400"
+                )}
               >
-                <Copy size={14} /> Copy
+                {copySuccess ? <CheckCircle2 size={14} /> : <Copy size={14} />}
+                {copySuccess ? 'Copied' : 'Copy'}
               </button>
               <button 
                 onClick={handleExportLogs}

@@ -58,6 +58,13 @@ interface CineVaultDB extends DBSchema {
       type: 'info' | 'success' | 'error';
     };
   };
+  savedBarcodes: {
+    key: string;
+    value: {
+      barcode: string;
+      timestamp: number;
+    };
+  };
 }
 
 export type ThemeType = 'dark' | 'paper' | 'glass' | 'wood' | 'metal' | 'fabric';
@@ -76,7 +83,7 @@ let dbPromise: Promise<IDBPDatabase<CineVaultDB>> | null = null;
 
 export const getDB = () => {
   if (!dbPromise) {
-    dbPromise = openDB<CineVaultDB>('cinevault-db', 3, {
+    dbPromise = openDB<CineVaultDB>('cinevault-db', 4, {
       upgrade(db, oldVersion) {
         if (oldVersion < 1) {
           const store = db.createObjectStore('collection', { keyPath: 'id' });
@@ -90,10 +97,32 @@ export const getDB = () => {
         if (oldVersion < 3) {
           db.createObjectStore('logs', { keyPath: 'id', autoIncrement: true });
         }
+        if (oldVersion < 4) {
+          db.createObjectStore('savedBarcodes', { keyPath: 'barcode' });
+        }
       },
     });
   }
   return dbPromise;
+};
+
+export const saveBarcode = async (barcode: string) => {
+  const db = await getDB();
+  await db.put('savedBarcodes', {
+    barcode,
+    timestamp: Date.now()
+  });
+};
+
+export const getSavedBarcodes = async () => {
+  const db = await getDB();
+  const barcodes = await db.getAll('savedBarcodes');
+  return barcodes.sort((a, b) => b.timestamp - a.timestamp);
+};
+
+export const deleteSavedBarcode = async (barcode: string) => {
+  const db = await getDB();
+  await db.delete('savedBarcodes', barcode);
 };
 
 export const addLog = async (event: string, type: 'info' | 'success' | 'error' = 'info', details?: string) => {
