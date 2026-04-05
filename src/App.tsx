@@ -474,9 +474,10 @@ export default function App() {
     
     setIsAdjustingCrop(false);
     setIsZoomed(true);
-    setStatusMessage({ type: 'info', text: 'Enhancing & Scanning...' });
-    await new Promise(r => setTimeout(r, 600));
-
+    setScanStatus('scanning');
+    setScanError(null);
+    setStatusMessage({ type: 'info', text: 'Preparing multi-pass scan...' });
+    
     // Load original image to canvas for cropping
     const img = new Image();
     img.src = processingPreview;
@@ -488,43 +489,82 @@ export default function App() {
     canvas.height = img.height;
     ctx.drawImage(img, 0, 0);
 
-    // 4. Crop and Enhance
-    const cropCanvas = document.createElement('canvas');
     const pixelX = (targetBox.x / 100) * canvas.width;
     const pixelY = (targetBox.y / 100) * canvas.height;
     const pixelW = (targetBox.w / 100) * canvas.width;
     const pixelH = (targetBox.h / 100) * canvas.height;
 
-    cropCanvas.width = pixelW;
-    cropCanvas.height = pixelH;
-    const cropCtx = cropCanvas.getContext('2d')!;
-    
-    // Apply enhancements during draw
-    cropCtx.filter = 'contrast(1.5) brightness(1.1) saturate(0) sharpness(1.2)'; 
-    cropCtx.drawImage(canvas, pixelX, pixelY, pixelW, pixelH, 0, 0, pixelW, pixelH);
-    
-    // 5. Scan the processed image
-    try {
-      const blob = await new Promise<Blob | null>(resolve => cropCanvas.toBlob(resolve, 'image/png'));
-      if (!blob) throw new Error("Canvas to Blob failed");
-      const processedFile = new File([blob], "processed.png", { type: "image/png" });
+    const attempts = [
+      { name: 'Standard', filter: 'contrast(1.3) brightness(1.1)' },
+      { name: 'High Contrast', filter: 'contrast(2.2) grayscale(1) brightness(1.0)' },
+      { name: 'Sharpened', filter: 'contrast(1.6) brightness(1.2) saturate(0)' },
+      { name: 'Rotated 90°', rotate: 90, filter: 'contrast(1.4)' },
+      { name: 'Rotated 180°', rotate: 180, filter: 'contrast(1.4)' },
+      { name: 'Rotated 270°', rotate: 270, filter: 'contrast(1.4)' },
+    ];
 
-      const html5QrCode = new Html5Qrcode("reader-hidden");
-      const barcode = await html5QrCode.scanFile(processedFile, true);
+    let foundBarcode = null;
+    const html5QrCode = new Html5Qrcode("reader-hidden");
+
+    for (let i = 0; i < attempts.length; i++) {
+      const attempt = attempts[i];
+      setStatusMessage({ type: 'info', text: `Attempt ${i + 1}/${attempts.length}: ${attempt.name}...` });
       
-      if (barcode) {
-        logEvent('Barcode Detected from Image', 'success', barcode);
-        setScanStatus('success');
-        setStatusMessage({ type: 'success', text: 'Barcode detected!' });
-        await new Promise(r => setTimeout(r, 500));
-        setIsProcessingImage(false);
-        await handleBarcodeLookup(barcode);
+      const cropCanvas = document.createElement('canvas');
+      const cropCtx = cropCanvas.getContext('2d')!;
+      
+      if (attempt.rotate) {
+        if (attempt.rotate === 90 || attempt.rotate === 270) {
+          cropCanvas.width = pixelH;
+          cropCanvas.height = pixelW;
+        } else {
+          cropCanvas.width = pixelW;
+          cropCanvas.height = pixelH;
+        }
+        
+        cropCtx.translate(cropCanvas.width / 2, cropCanvas.height / 2);
+        cropCtx.rotate((attempt.rotate * Math.PI) / 180);
+        if (attempt.filter) cropCtx.filter = attempt.filter;
+        cropCtx.drawImage(canvas, pixelX, pixelY, pixelW, pixelH, -pixelW / 2, -pixelH / 2, pixelW, pixelH);
+      } else {
+        cropCanvas.width = pixelW;
+        cropCanvas.height = pixelH;
+        if (attempt.filter) cropCtx.filter = attempt.filter;
+        cropCtx.drawImage(canvas, pixelX, pixelY, pixelW, pixelH, 0, 0, pixelW, pixelH);
       }
-    } catch (err) {
-      logEvent('Image Scan Failed', 'error', String(err));
-      setScanError("Barcode not detected. Adjust crop and retry.");
+
+      try {
+        const blob = await new Promise<Blob | null>(resolve => cropCanvas.toBlob(resolve, 'image/png'));
+        if (!blob) continue;
+        const processedFile = new File([blob], "processed.png", { type: "image/png" });
+
+        // Try scanning with experimental features if available
+        const barcode = await html5QrCode.scanFile(processedFile, false);
+        
+        if (barcode) {
+          foundBarcode = barcode;
+          break;
+        }
+      } catch (err) {
+        // Continue to next attempt
+      }
+      
+      // Small delay between attempts to show progress in UI
+      await new Promise(r => setTimeout(r, 150));
+    }
+
+    if (foundBarcode) {
+      logEvent('Barcode Detected from Image', 'success', foundBarcode);
+      setScanStatus('success');
+      setStatusMessage({ type: 'success', text: 'Barcode detected!' });
+      await new Promise(r => setTimeout(r, 500));
+      setIsProcessingImage(false);
+      await handleBarcodeLookup(foundBarcode);
+    } else {
+      logEvent('Image Scan Failed after multiple attempts', 'error');
+      setScanError("Barcode not detected. Try manual entry or adjust crop.");
       setScanStatus('failed');
-      setStatusMessage({ type: 'error', text: 'Detection failed. Adjust crop.' });
+      setStatusMessage({ type: 'error', text: 'All scan attempts failed.' });
       setIsAdjustingCrop(true);
       setIsZoomed(false);
     }
@@ -533,18 +573,19 @@ export default function App() {
   const detectBarcodeRegion = (ctx: CanvasRenderingContext2D, width: number, height: number) => {
     const imageData = ctx.getImageData(0, 0, width, height);
     const data = imageData.data;
-    const gridSize = 30;
+    const gridSize = 25;
     const cols = Math.floor(width / gridSize);
     const rows = Math.floor(height / gridSize);
     const grid = Array(rows).fill(0).map(() => Array(cols).fill(0));
 
+    // 1. Edge detection pass
     for (let y = 0; y < height; y += 4) {
       for (let x = 1; x < width; x += 4) {
         const idx = (y * width + x) * 4;
         const prevIdx = (y * width + x - 1) * 4;
         const b = (data[idx] + data[idx+1] + data[idx+2]) / 3;
         const pb = (data[prevIdx] + data[prevIdx+1] + data[prevIdx+2]) / 3;
-        if (Math.abs(b - pb) > 35) {
+        if (Math.abs(b - pb) > 38) {
           const r = Math.floor(y / gridSize);
           const c = Math.floor(x / gridSize);
           if (r < rows && c < cols) grid[r][c]++;
@@ -552,29 +593,45 @@ export default function App() {
       }
     }
 
+    // 2. Find the most dense cluster (barcodes are usually compact)
     let maxDensity = 0;
-    let bestR = 0, bestC = 0;
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        if (grid[r][c] > maxDensity) {
-          maxDensity = grid[r][c];
-          bestR = r;
-          bestC = c;
+    let bestBox = null;
+
+    // Scan for 3x4 blocks of high density
+    for (let r = 0; r < rows - 3; r++) {
+      for (let c = 0; c < cols - 4; c++) {
+        let density = 0;
+        let minR = r, maxR = r, minC = c, maxC = c;
+        
+        for (let dr = 0; dr < 3; dr++) {
+          for (let dc = 0; dc < 4; dc++) {
+            const val = grid[r + dr][c + dc];
+            if (val > 10) {
+              density += val;
+              minR = Math.min(minR, r + dr);
+              maxR = Math.max(maxR, r + dr);
+              minC = Math.min(minC, c + dc);
+              maxC = Math.max(maxC, c + dc);
+            }
+          }
+        }
+
+        if (density > maxDensity) {
+          maxDensity = density;
+          bestBox = { minR, maxR, minC, maxC };
         }
       }
     }
 
-    if (maxDensity < 15) return null;
+    if (!bestBox || maxDensity < 50) return null;
 
-    const boxW = Math.min(width * 0.9, gridSize * 12);
-    const boxH = Math.min(height * 0.5, gridSize * 8);
-    
-    return {
-      x: Math.max(0, (bestC * gridSize - boxW / 2 + gridSize / 2) / width * 100),
-      y: Math.max(0, (bestR * gridSize - boxH / 2 + gridSize / 2) / height * 100),
-      w: (boxW / width) * 100,
-      h: (boxH / height) * 100
-    };
+    // 3. Calculate final box with padding
+    const x = Math.max(0, (bestBox.minC * gridSize / width) * 100 - 8);
+    const y = Math.max(0, (bestBox.minR * gridSize / height) * 100 - 8);
+    const w = Math.min(100 - x, ((bestBox.maxC - bestBox.minC + 1) * gridSize / width) * 100 + 16);
+    const h = Math.min(100 - y, ((bestBox.maxR - bestBox.minR + 1) * gridSize / height) * 100 + 16);
+
+    return { x, y, w, h };
   };
 
   const handleBarcodeLookup = async (barcode: string) => {
